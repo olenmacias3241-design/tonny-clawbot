@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>日报 / 周报 · Claw Bot</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #18181c;
+      --border: #2a2a32;
+      --text: #e4e4e7;
+      --text-muted: #8b8b95;
+      --accent: #22c55e;
+      --accent-dim: #16a34a;
+      --danger: #ef4444;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Noto Sans SC', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+    .container { max-width: 900px; margin: 0 auto; padding: 2rem 1.5rem; }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
+    h1::before { content: ''; width: 4px; height: 1.2em; background: var(--accent); border-radius: 2px; }
+    .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    .form-row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
+    .field { display: flex; flex-direction: column; gap: 0.35rem; }
+    .field label { font-size: 0.8rem; color: var(--text-muted); font-weight: 500; }
+    input[type="text"], input[type="date"] {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      min-width: 180px;
+    }
+    input:focus { outline: none; border-color: var(--accent); }
+    .btn {
+      font-family: inherit;
+      font-size: 0.9rem;
+      font-weight: 500;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary { background: var(--accent); color: #0a0a0c; }
+    .btn-primary:hover { background: var(--accent-dim); }
+    .btn-secondary { background: var(--border); color: var(--text); }
+    .btn-secondary:hover { background: #3a3a44; }
+    .tabs {
+      display: flex;
+      gap: 0.25rem;
+      margin-bottom: 1rem;
+    }
+    .tab {
+      padding: 0.4rem 1rem;
+      font-size: 0.9rem;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--text-muted);
+      background: transparent;
+      border: 1px solid transparent;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); background: rgba(34,197,94,0.1); border-color: var(--accent); }
+    .status { font-size: 0.85rem; color: var(--text-muted); margin-top: 1rem; }
+    .status.loading { color: var(--accent); }
+    .status.error { color: var(--danger); }
+    .report {
+      font-size: 0.95rem;
+      white-space: pre-wrap;
+    }
+    .report h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin: 1.25rem 0 0.6rem;
+      color: var(--text);
+    }
+    .report h2:first-child { margin-top: 0; }
+    .report .meta { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem; }
+    .report .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      padding: 0.75rem;
+      background: var(--bg);
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    .report .stats span { color: var(--text-muted); }
+    .report .stats strong { color: var(--accent); margin-right: 0.25rem; }
+    .report .section { margin-bottom: 1rem; }
+    .report .project-name {
+      font-weight: 600;
+      color: var(--accent);
+      margin: 0.75rem 0 0.35rem;
+      font-size: 0.9rem;
+    }
+    .report .date-group {
+      margin-bottom: 1rem;
+      padding-left: 0.5rem;
+      border-left: 3px solid var(--border);
+    }
+    .report .date-group .date-label {
+      font-weight: 600;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+    .report ul { margin: 0.25rem 0 0 1.25rem; padding: 0; }
+    .report li {
+      margin-bottom: 0.35rem;
+      line-height: 1.5;
+    }
+    .report li a { color: inherit; text-decoration: none; }
+    .report li a:hover { text-decoration: underline; color: var(--accent); }
+    .report .time { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted); margin-right: 0.5rem; }
+    .empty-state { text-align: center; padding: 3rem 1rem; color: var(--text-muted); }
+    .empty-state p { margin-bottom: 0.5rem; }
+    .empty-state small { font-size: 0.85rem; }
+    .header-row { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.5rem; }
+    .btn-link { background: none; border: none; color: var(--text-muted); font-size: 0.85rem; cursor: pointer; text-decoration: underline; padding: 0; }
+    .btn-link:hover { color: var(--accent); }
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000;
+      align-items: center; justify-content: center; padding: 2rem;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal-box {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      max-width: 800px; max-height: 85vh; width: 100%; overflow: hidden; display: flex; flex-direction: column;
+    }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); }
+    .modal-header h3 { font-size: 1rem; }
+    .modal-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.2rem; padding: 0 0.5rem; }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { padding: 1.25rem; overflow-y: auto; flex: 1; font-size: 0.9rem; }
+    .modal-body h1, .modal-body h2, .modal-body h3 { margin: 1rem 0 0.5rem; color: var(--text); }
+    .modal-body h1 { font-size: 1.2rem; }
+    .modal-body h2 { font-size: 1.05rem; }
+    .modal-body table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+    .modal-body th, .modal-body td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; }
+    .modal-body th { background: var(--bg); color: var(--accent); }
+    .modal-body code, .modal-body pre { background: var(--bg); padding: 0.2rem 0.4rem; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
+    .modal-body pre { padding: 0.75rem; overflow-x: auto; white-space: pre; }
+    .modal-body ul, .modal-body ol { margin: 0.5rem 0 0 1.25rem; }
+    .modal-body a { color: var(--accent); }
+    .repos-panel {
+      display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; padding: 0.5rem 0;
+      font-size: 0.85rem; color: var(--text-muted);
+    }
+    .repos-panel .tag { background: var(--border); padding: 0.2rem 0.5rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-row">
+      <div>
+        <h1>日报 / 周报</h1>
+        <p class="subtitle">按用户邮箱和日期查看 GitHub 提交记录，支持日报、周报格式统计</p>
+        <div class="repos-panel" id="reposPanel">
+          <span>已配置仓库：</span>
+          <span id="reposList"></span>
+        </div>
+      </div>
+      <button class="btn btn-link" id="btnGuide">仓库文档与代码分析</button>
+    </div>
+
+    <div class="panel">
+      <div class="tabs">
+        <button class="tab active" data-mode="daily">日报</button>
+        <button class="tab" data-mode="weekly">周报</button>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label>用户邮箱 (user_id)</label>
+          <input type="text" id="userId" placeholder="shanglily01@gmail.com" value="shanglily01@gmail.com">
+        </div>
+        <div class="field" id="fieldDate">
+          <label>日期</label>
+          <input type="date" id="date">
+        </div>
+        <div class="field" id="fieldEndDate" style="display:none">
+          <label>结束日期</label>
+          <input type="date" id="endDate">
+        </div>
+        <button class="btn btn-primary" id="btnLoad">加载</button>
+        <button class="btn btn-secondary" id="btnSync">同步 GitHub</button>
+      </div>
+      <p class="status" id="status"></p>
+    </div>
+
+    <div class="panel">
+      <div class="report" id="reportContent"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="guideModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>项目说明与代码分析</h3>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <div class="tabs" style="margin:0">
+            <button class="tab modal-tab active" data-doc="guide">项目说明</button>
+            <button class="tab modal-tab" data-doc="code">代码分析</button>
+          </div>
+          <button class="modal-close" id="modalClose">&times;</button>
+        </div>
+      </div>
+      <div class="modal-body" id="guideContent">
+        <p style="color:var(--text-muted)">加载中...</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '';
+    const userIdEl = document.getElementById('userId');
+    const dateEl = document.getElementById('date');
+    const endDateEl = document.getElementById('endDate');
+    const fieldDateEl = document.getElementById('fieldDate');
+    const fieldEndDateEl = document.getElementById('fieldEndDate');
+    const btnLoad = document.getElementById('btnLoad');
+    const btnSync = document.getElementById('btnSync');
+    const statusEl = document.getElementById('status');
+    const reportEl = document.getElementById('reportContent');
+    let mode = 'daily';
+
+    const today = new Date().toISOString().slice(0, 10);
+    dateEl.value = today;
+    endDateEl.value = today;
+
+    fetch(`${API_BASE}/config/github-repos`).then(r=>r.json()).then(d=>{
+      const el = document.getElementById('reposList');
+      if (d.repos?.length) {
+        el.innerHTML = d.repos.map(r => `<span class="tag">${escapeHtml(r)}</span>`).join('');
+      } else {
+        el.textContent = '未配置';
+      }
+    }).catch(()=>{});
+
+    const guideModal = document.getElementById('guideModal');
+    const guideContent = document.getElementById('guideContent');
+    let cachedGuide = null, cachedCode = null;
+
+    async function loadProjectGuide() {
+      if (cachedGuide) { guideContent.innerHTML = cachedGuide; return; }
+      guideContent.innerHTML = '<p style="color:var(--text-muted)">加载中...</p>';
+      try {
+        const res = await fetch(`${API_BASE}/api/docs/project-guide`);
+        const data = await res.json();
+        if (res.ok && data.content) {
+          cachedGuide = (typeof marked !== 'undefined' ? marked.parse(data.content) : '<pre>' + escapeHtml(data.content) + '</pre>');
+          guideContent.innerHTML = cachedGuide;
+        } else {
+          guideContent.innerHTML = '<p style="color:var(--danger)">加载失败</p>';
+        }
+      } catch (e) {
+        guideContent.innerHTML = '<p style="color:var(--danger)">加载失败: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    function renderCodeAnalysis(data) {
+      const desc = data.section_descriptions || {};
+      const sections = data.sections || {};
+      const order = ['bot','models','handlers','services','providers','utils','root'];
+      let html = '<div class="code-analysis">';
+      for (const sec of order) {
+        const items = sections[sec];
+        if (!items || items.length === 0) continue;
+        html += `<h4 style="margin:1rem 0 0.5rem;color:var(--accent)">${escapeHtml(sec)}</h4>`;
+        html += `<p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0.5rem">${escapeHtml(desc[sec] || '')}</p>`;
+        for (const file of items) {
+          if (file.path.includes('__init__')) continue;
+          html += `<div class="code-file" style="margin-bottom:1rem;padding:0.75rem;background:var(--bg);border-radius:6px;border:1px solid var(--border)">`;
+          html += `<div style="font-family:JetBrains Mono;font-size:0.85rem;color:var(--accent);margin-bottom:0.35rem">${escapeHtml(file.path)}</div>`;
+          if (file.module_doc) html += `<p style="font-size:0.9rem;margin:0.25rem 0;color:var(--text-muted)">${escapeHtml(file.module_doc)}</p>`;
+          for (const c of file.classes || []) {
+            html += `<div style="margin-top:0.5rem"><strong>${escapeHtml(c.name)}</strong>`;
+            if (c.doc) html += `: ${escapeHtml(c.doc)}`;
+            html += '</div>';
+            if (c.methods && c.methods.length) {
+              html += '<div style="font-size:0.85rem;margin-left:1rem;color:var(--text-muted)">';
+              html += c.methods.slice(0,5).map(m => m.name + (m.doc ? ': ' + m.doc.slice(0,40) : '')).map(s => escapeHtml(s)).join(' · ');
+              html += '</div>';
+            }
+          }
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+      return html;
+    }
+
+    async function loadCodeAnalysis() {
+      if (cachedCode) { guideContent.innerHTML = cachedCode; return; }
+      guideContent.innerHTML = '<p style="color:var(--text-muted)">分析代码中...</p>';
+      try {
+        const res = await fetch(`${API_BASE}/api/docs/code-analysis`);
+        const data = await res.json();
+        if (res.ok && data.sections) {
+          cachedCode = renderCodeAnalysis(data);
+          guideContent.innerHTML = cachedCode;
+        } else {
+          guideContent.innerHTML = '<p style="color:var(--danger)">分析失败</p>';
+        }
+      } catch (e) {
+        guideContent.innerHTML = '<p style="color:var(--danger)">分析失败: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    document.getElementById('btnGuide').addEventListener('click', () => { window.location.href = '/guide'; });
+    document.querySelectorAll('.modal-tab').forEach(t => {
+      t.addEventListener('click', () => {
+        document.querySelectorAll('.modal-tab').forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        if (t.dataset.doc === 'code') loadCodeAnalysis();
+        else loadProjectGuide();
+      });
+    });
+    document.getElementById('modalClose').addEventListener('click', () => guideModal.classList.remove('show'));
+    guideModal.addEventListener('click', (e) => { if (e.target === guideModal) guideModal.classList.remove('show'); });
+
+    document.querySelectorAll('.tab').forEach(t => {
+      t.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        mode = t.dataset.mode;
+        fieldDateEl.querySelector('label').textContent = mode === 'weekly' ? '开始日期' : '日期';
+        fieldEndDateEl.style.display = mode === 'weekly' ? 'flex' : 'none';
+        if (mode === 'weekly') {
+          const d = new Date(dateEl.value);
+          d.setDate(d.getDate() + 6);
+          endDateEl.value = d.toISOString().slice(0, 10);
+        }
+      });
+    });
+
+    function setStatus(msg, type = '') {
+      statusEl.textContent = msg;
+      statusEl.className = 'status ' + type;
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s || '';
+      return div.innerHTML;
+    }
+
+    function formatTime(ts) {
+      return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function formatDate(ts) {
+      return new Date(ts).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' });
+    }
+
+    function renderReport(activities, date, endDate) {
+      if (activities.length === 0) {
+        reportEl.innerHTML = `
+          <div class="empty-state">
+            <p>暂无活动记录</p>
+            <small>请先点击「同步 GitHub」拉取最新数据，或检查 user_id 是否与 Git 提交邮箱一致</small>
+          </div>
+        `;
+        return;
+      }
+
+      const commits = activities.filter(a => a.type === 'commit');
+      const prs = activities.filter(a => a.type.startsWith('pr'));
+
+      let html = '';
+
+      if (mode === 'daily') {
+        html += `<div class="meta">日期：${date}</div>`;
+      } else {
+        html += `<div class="meta">周期：${date} 至 ${endDate}</div>`;
+      }
+
+      html += `
+        <div class="stats">
+          <span><strong>${commits.length}</strong> 次提交</span>
+          <span><strong>${prs.length}</strong> 个 PR</span>
+          <span><strong>${activities.length}</strong> 条活动</span>
+        </div>
+      `;
+
+      if (mode === 'daily') {
+        html += '<h2>一、今日主要工作</h2>';
+        const byProject = {};
+        activities.forEach(a => {
+          const p = a.project_name || '未分类';
+          if (!byProject[p]) byProject[p] = [];
+          byProject[p].push(a);
+        });
+        Object.entries(byProject).forEach(([proj, list]) => {
+          html += `<div class="project-name">${escapeHtml(proj)}</div><ul>`;
+          list.forEach(a => {
+            const title = a.title || a.type;
+            const link = a.url ? `<a href="${a.url}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : escapeHtml(title);
+            html += `<li><span class="time">${formatTime(a.timestamp)}</span>${link}</li>`;
+          });
+          html += '</ul>';
+        });
+      } else {
+        html += '<h2>一、本周主要工作</h2>';
+        const byDate = {};
+        activities.forEach(a => {
+          const d = new Date(a.timestamp).toISOString().slice(0, 10);
+          if (!byDate[d]) byDate[d] = {};
+          const p = a.project_name || '未分类';
+          if (!byDate[d][p]) byDate[d][p] = [];
+          byDate[d][p].push(a);
+        });
+        const sortedDates = Object.keys(byDate).sort();
+        sortedDates.forEach(d => {
+          html += `<div class="date-group"><div class="date-label">${formatDate(d)}</div>`;
+          Object.entries(byDate[d]).forEach(([proj, list]) => {
+            html += `<div class="project-name">${escapeHtml(proj)}</div><ul>`;
+            list.forEach(a => {
+              const title = a.title || a.type;
+              const link = a.url ? `<a href="${a.url}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : escapeHtml(title);
+              html += `<li><span class="time">${formatTime(a.timestamp)}</span>${link}</li>`;
+            });
+            html += '</ul>';
+          });
+          html += '</div>';
+        });
+      }
+
+      reportEl.innerHTML = html;
+    }
+
+    async function load() {
+      const user_id = userIdEl.value.trim();
+      const date = dateEl.value;
+      if (!user_id || !date) {
+        setStatus('请填写用户邮箱和日期', 'error');
+        return;
+      }
+      setStatus('加载中...', 'loading');
+      try {
+        let url = `${API_BASE}/activities?user_id=${encodeURIComponent(user_id)}&date=${date}`;
+        if (mode === 'weekly') {
+          const end_date = endDateEl.value;
+          if (!end_date) throw new Error('请选择结束日期');
+          url += `&end_date=${end_date}`;
+        }
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        renderReport(data.activities, data.date, data.end_date || data.date);
+        setStatus(`已加载 ${data.count} 条记录`);
+      } catch (e) {
+        setStatus('加载失败: ' + e.message, 'error');
+        renderReport([]);
+      }
+    }
+
+    async function sync() {
+      setStatus('正在同步 GitHub...', 'loading');
+      try {
+        const res = await fetch(`${API_BASE}/activities/github/sync?hours=168`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        setStatus(`同步完成：${data.repos?.length || 1} 个仓库，拉取 ${data.total_fetched} 条，写入 ${data.total_upserted} 条`);
+        load();
+      } catch (e) {
+        setStatus('同步失败: ' + e.message, 'error');
+      }
+    }
+
+    btnLoad.addEventListener('click', load);
+    btnSync.addEventListener('click', sync);
+  </script>
+</body>
+</html>
