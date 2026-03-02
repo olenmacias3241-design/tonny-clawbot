@@ -50,6 +50,7 @@ class ActivityQuery(BaseModel):
     """Query parameters for fetching activities."""
 
     user_id: Optional[str] = None
+    user_ids: Optional[List[str]] = None  # 多人时筛选：user_id IN user_ids
     project_id: Optional[str] = None
     project_name: Optional[str] = None  # e.g. "owner/repo" 按仓库筛选
     start_time: Optional[datetime] = None

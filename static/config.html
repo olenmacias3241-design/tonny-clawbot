@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>仓库与用户配置 · Claw Bot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #18181c;
+      --border: #2a2a32;
+      --text: #e4e4e7;
+      --text-muted: #8b8b95;
+      --accent: #22c55e;
+      --accent-dim: #16a34a;
+      --danger: #ef4444;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Noto Sans SC', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.6; }
+    .container { max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem; }
+    .top-strip { display: flex; align-items: center; gap: 1.5rem; padding: 0.75rem 1.5rem; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 0.9rem; flex-shrink: 0; }
+    .top-strip a { color: var(--text-muted); text-decoration: none; }
+    .top-strip a:hover { color: var(--accent); }
+    .top-strip a.active { color: var(--accent); font-weight: 500; }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.5rem; }
+    h1::before { content: ''; width: 4px; height: 1.2em; background: var(--accent); border-radius: 2px; }
+    .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1rem; }
+    .repo-card { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 0.75rem; background: var(--surface); }
+    .repo-card .info { flex: 1; min-width: 200px; }
+    .repo-card .name { font-weight: 600; color: var(--accent); margin-bottom: 0.25rem; }
+    .repo-card .repo-id { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; }
+    .repo-card .members { font-size: 0.85rem; color: var(--text-muted); }
+    .repo-card .members span { display: inline-block; margin-right: 0.5rem; margin-bottom: 0.25rem; }
+    .repo-card .members .email { font-family: 'JetBrains Mono', monospace; }
+    .repo-card .actions { display: flex; gap: 0.5rem; }
+    .btn { font-family: inherit; font-size: 0.85rem; font-weight: 500; padding: 0.4rem 0.75rem; border-radius: 6px; border: none; cursor: pointer; }
+    .btn-primary { background: var(--accent); color: #0a0a0c; }
+    .btn-primary:hover { background: var(--accent-dim); }
+    .btn-secondary { background: var(--border); color: var(--text); }
+    .btn-secondary:hover { background: #3a3a44; }
+    .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+    .btn-danger:hover { background: rgba(239,68,68,0.15); }
+    .btn-add { margin-bottom: 1rem; }
+    .status { font-size: 0.85rem; margin-top: 1rem; }
+    .status.loading { color: var(--accent); }
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--accent); }
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center; padding: 2rem; overflow-y: auto; }
+    .modal-overlay.show { display: flex; }
+    .modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); max-width: 520px; width: 100%; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); }
+    .modal-header h3 { font-size: 1rem; }
+    .modal-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.2rem; padding: 0 0.5rem; }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { padding: 1.25rem; overflow-y: auto; }
+    .field { margin-bottom: 1rem; }
+    .field label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem; }
+    .field input { width: 100%; padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 0.9rem; }
+    .field input:focus { outline: none; border-color: var(--accent); }
+    .member-row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; align-items: center; }
+    .member-row input { flex: 1; }
+    .member-row .email-inp { min-width: 0; }
+    .member-row .name-inp { max-width: 140px; }
+    .modal-footer { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 1rem 1.25rem; border-top: 1px solid var(--border); }
+    .empty-state { text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <header class="top-strip">
+    <a href="/chat">Claw Bot</a>
+    <a href="/daily">日报周报</a>
+    <a href="/guide">仓库文档</a>
+    <a href="/config" class="active">配置</a>
+  </header>
+  <div class="container">
+    <h1>仓库与用户配置</h1>
+    <p class="subtitle">在此页为每个仓库配置成员（提交邮箱与人员名称），日报周报中的「用户」与提交列表中的显示名均来自此处。</p>
+    <p class="status" id="status"></p>
+    <div id="repoList"></div>
+    <button type="button" class="btn btn-primary btn-add" id="btnAdd">+ 添加仓库</button>
+  </div>
+
+  <div class="modal-overlay" id="modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="modalTitle">添加仓库</h3>
+        <button type="button" class="modal-close" id="modalClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>GitHub Owner（组织或用户名）</label>
+          <input type="text" id="editOwner" placeholder="shanglily01-lab">
+        </div>
+        <div class="field">
+          <label>仓库名 (repo)</label>
+          <input type="text" id="editRepo" placeholder="test2">
+        </div>
+        <div class="field">
+          <label>显示名称（在左侧菜单显示）</label>
+          <input type="text" id="editName" placeholder="超级大脑">
+        </div>
+        <div class="field">
+          <label>成员（邮箱 → 人员名称）<span style="font-weight:normal;color:var(--text-muted);font-size:0.8rem"> — 此处配置的用户名会在日报周报中显示</span></label>
+          <div id="memberRows"></div>
+          <button type="button" class="btn btn-secondary" id="btnAddMember" style="margin-top:0.5rem">+ 添加成员</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="modalCancel">取消</button>
+        <button type="button" class="btn btn-primary" id="modalSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '';
+    const repoListEl = document.getElementById('repoList');
+    const statusEl = document.getElementById('status');
+    const modalEl = document.getElementById('modal');
+    const btnAdd = document.getElementById('btnAdd');
+    const modalTitle = document.getElementById('modalTitle');
+    const editOwner = document.getElementById('editOwner');
+    const editRepo = document.getElementById('editRepo');
+    const editName = document.getElementById('editName');
+    const memberRowsEl = document.getElementById('memberRows');
+    const btnAddMember = document.getElementById('btnAddMember');
+    const modalClose = document.getElementById('modalClose');
+    const modalCancel = document.getElementById('modalCancel');
+    const modalSave = document.getElementById('modalSave');
+
+    let repos = [];
+    let editIndex = -1;
+    let memberRows = [];
+
+    function setStatus(msg, type = '') {
+      statusEl.textContent = msg;
+      statusEl.className = 'status ' + type;
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s || '';
+      return div.innerHTML;
+    }
+
+    function loadRepos() {
+      setStatus('加载中...', 'loading');
+      fetch(API_BASE + '/api/config/repos')
+        .then(r => r.json())
+        .then(data => {
+          repos = data.repos || [];
+          renderList();
+          setStatus('');
+        })
+        .catch(e => {
+          setStatus('加载失败: ' + (e.message || e), 'error');
+          repoListEl.innerHTML = '<div class="empty-state">加载失败，请稍后重试</div>';
+        });
+    }
+
+    function renderList() {
+      if (repos.length === 0) {
+        repoListEl.innerHTML = '<div class="empty-state">暂无仓库，点击「添加仓库」添加</div>';
+        return;
+      }
+      repoListEl.innerHTML = repos.map((r, i) => {
+        const members = (r.user_ids || []).map(email => {
+          const name = (r.user_names || {})[email];
+          return name ? `<span class="email">${escapeHtml(email)}</span> → ${escapeHtml(name)}` : `<span class="email">${escapeHtml(email)}</span>`;
+        }).join('、') || (r.user_id ? `<span class="email">${escapeHtml(r.user_id)}</span>` : '—');
+        return `
+          <div class="repo-card" data-index="${i}">
+            <div class="info">
+              <div class="name">${escapeHtml(r.name || r.repo)}</div>
+              <div class="repo-id">${escapeHtml(r.owner + '/' + r.repo)}</div>
+              <div class="members">${members}</div>
+            </div>
+            <div class="actions">
+              <button type="button" class="btn btn-secondary edit-btn" data-index="${i}">编辑</button>
+              <button type="button" class="btn btn-danger delete-btn" data-index="${i}">删除</button>
+            </div>
+          </div>`;
+      }).join('');
+      repoListEl.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.addEventListener('click', () => openEdit(parseInt(btn.dataset.index, 10)));
+      });
+      repoListEl.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', () => deleteRepo(parseInt(btn.dataset.index, 10)));
+      });
+    }
+
+    function openEdit(index) {
+      editIndex = index;
+      modalTitle.textContent = index >= 0 ? '编辑仓库' : '添加仓库';
+      if (index >= 0 && repos[index]) {
+        const r = repos[index];
+        editOwner.value = r.owner || '';
+        editRepo.value = r.repo || '';
+        editName.value = r.name || '';
+        const ids = r.user_ids || (r.user_id ? [r.user_id] : []);
+        const unames = r.user_names || {};
+        memberRows = ids.map(email => ({ email, name: unames[email] || '' }));
+      } else {
+        editOwner.value = '';
+        editRepo.value = '';
+        editName.value = '';
+        memberRows = [{ email: '', name: '' }];
+      }
+      renderMemberRows();
+      modalEl.classList.add('show');
+    }
+
+    function renderMemberRows() {
+      memberRowsEl.innerHTML = memberRows.map((row, i) => `
+        <div class="member-row" data-i="${i}">
+          <input type="text" class="email-inp" placeholder="邮箱" value="${escapeHtml(row.email)}">
+          <input type="text" class="name-inp" placeholder="人员名称" value="${escapeHtml(row.name)}">
+          <button type="button" class="btn btn-danger btn-remove-member" data-i="${i}">删除</button>
+        </div>`).join('');
+      memberRowsEl.querySelectorAll('.email-inp').forEach((inp, i) => {
+        inp.addEventListener('input', () => { memberRows[i].email = inp.value.trim(); });
+      });
+      memberRowsEl.querySelectorAll('.name-inp').forEach((inp, i) => {
+        inp.addEventListener('input', () => { memberRows[i].name = inp.value.trim(); });
+      });
+      memberRowsEl.querySelectorAll('.btn-remove-member').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const i = parseInt(btn.dataset.i, 10);
+          memberRows.splice(i, 1);
+          if (memberRows.length === 0) memberRows = [{ email: '', name: '' }];
+          renderMemberRows();
+        });
+      });
+    }
+
+    function closeModal() {
+      modalEl.classList.remove('show');
+      editIndex = -1;
+    }
+
+    function collectForm() {
+      const owner = editOwner.value.trim();
+      const repo = editRepo.value.trim();
+      const name = editName.value.trim();
+      const user_ids = [];
+      const user_names = {};
+      memberRows.forEach(row => {
+        const email = (row.email || '').trim();
+        if (email) {
+          user_ids.push(email);
+          const n = (row.name || '').trim();
+          if (n) user_names[email] = n;
+        }
+      });
+      return { owner, repo, name: name || `${owner}/${repo}`, user_ids, user_names };
+    }
+
+    function saveOne() {
+      const form = collectForm();
+      if (!form.owner || !form.repo) {
+        setStatus('请填写 Owner 和仓库名', 'error');
+        return;
+      }
+      if (form.user_ids.length === 0) {
+        setStatus('请至少添加一个成员邮箱', 'error');
+        return;
+      }
+      let newRepos = repos.slice();
+      const payload = {
+        owner: form.owner,
+        repo: form.repo,
+        name: form.name,
+        user_ids: form.user_ids,
+        user_names: form.user_names,
+      };
+      if (form.user_ids.length === 1) payload.user_id = form.user_ids[0];
+      if (editIndex >= 0) {
+        newRepos[editIndex] = payload;
+      } else {
+        newRepos.push(payload);
+      }
+      setStatus('保存中...', 'loading');
+      fetch(API_BASE + '/api/config/repos', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repos: newRepos }),
+      })
+        .then(r => r.json().then(data => ({ ok: r.ok, status: r.status, data })))
+        .then(({ ok, data }) => {
+          if (!ok) throw new Error(data.detail || data.message || '保存失败');
+          repos = data.repos || newRepos;
+          renderList();
+          closeModal();
+          setStatus('已保存', 'ok');
+          setTimeout(() => setStatus(''), 2000);
+        })
+        .catch(e => {
+          setStatus('保存失败: ' + (e.message || e), 'error');
+        });
+    }
+
+    function deleteRepo(index) {
+      if (!confirm('确定删除该仓库配置？')) return;
+      const newRepos = repos.filter((_, i) => i !== index);
+      setStatus('保存中...', 'loading');
+      fetch(API_BASE + '/api/config/repos', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repos: newRepos }),
+      })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok) throw new Error(data.detail || data.message || '删除失败');
+          repos = data.repos || newRepos;
+          renderList();
+          setStatus('已删除', 'ok');
+          setTimeout(() => setStatus(''), 2000);
+        })
+        .catch(e => {
+          setStatus('删除失败: ' + (e.message || e), 'error');
+        });
+    }
+
+    btnAdd.addEventListener('click', () => openEdit(-1));
+    btnAddMember.addEventListener('click', () => {
+      memberRows.push({ email: '', name: '' });
+      renderMemberRows();
+    });
+    modalClose.addEventListener('click', closeModal);
+    modalCancel.addEventListener('click', closeModal);
+    modalSave.addEventListener('click', saveOne);
+    modalEl.addEventListener('click', e => { if (e.target === modalEl) closeModal(); });
+
+    loadRepos();
+  </script>
+</body>
+</html>

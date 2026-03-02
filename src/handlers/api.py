@@ -81,8 +81,23 @@ if os.path.isdir(_static_dir):
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 
+def _get_bot_config_path():
+    """config/bot_config.yaml 的路径。"""
+    return (_project_root / "config" / "bot_config.yaml") if _project_root else Path(__file__).resolve().parent.parent / "config" / "bot_config.yaml"
+
+
 def _get_repo_user_id_map():
-    """从 config/bot_config.yaml 的 github.repos 读取每个仓库对应的 user_id（邮箱），返回 {"owner/repo": "email"}。"""
+    """从 config 读取每个仓库的默认 user_id（单个邮箱），返回 {"owner/repo": "email"}。有 user_ids 时取第一个；否则用 user_id。"""
+    ids_map = _get_repo_user_ids_map()
+    result = {}
+    for r, emails in ids_map.items():
+        if emails:
+            result[r] = emails[0]
+    return result
+
+
+def _get_repo_user_ids_map():
+    """从 config 的 github.repos 读取每个仓库的 user_ids（列表）；无则用 user_id 转成单元素列表。返回 {"owner/repo": ["email", ...]}。"""
     import yaml
     config_path = (_project_root / "config" / "bot_config.yaml") if _project_root else Path(__file__).resolve().parent.parent / "config" / "bot_config.yaml"
     result = {}
@@ -95,31 +110,82 @@ def _get_repo_user_id_map():
             if isinstance(item, dict):
                 owner = (item.get("owner") or "").strip()
                 repo = (item.get("repo") or "").strip()
-                user_id = (item.get("user_id") or "").strip()
-                if owner and repo and user_id:
-                    result[f"{owner}/{repo}"] = user_id
+                if not owner or not repo:
+                    continue
+                key = f"{owner}/{repo}"
+                raw_ids = item.get("user_ids")
+                if raw_ids is not None and isinstance(raw_ids, list):
+                    emails = [str(x).strip() for x in raw_ids if x]
+                else:
+                    single = (item.get("user_id") or "").strip()
+                    emails = [single] if single else []
+                if emails:
+                    result[key] = emails
+    except Exception:
+        pass
+    return result
+
+
+def _get_repo_name_map():
+    """从 config 读取每个仓库的显示名，返回 {"owner/repo": "显示名"}，无则用 repo。"""
+    import yaml
+    config_path = (_project_root / "config" / "bot_config.yaml") if _project_root else Path(__file__).resolve().parent.parent / "config" / "bot_config.yaml"
+    result = {}
+    if not config_path.is_file():
+        return result
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        for item in (data or {}).get("github", {}).get("repos") or []:
+            if isinstance(item, dict):
+                owner = (item.get("owner") or "").strip()
+                repo = (item.get("repo") or "").strip()
+                name = (item.get("name") or item.get("description") or "").strip()
+                if owner and repo:
+                    result[f"{owner}/{repo}"] = name or f"{owner}/{repo}"
+    except Exception:
+        pass
+    return result
+
+
+def _get_repo_user_names_map():
+    """从 config 的 github.repos 读取每个仓库的 user_names（邮箱 -> 人员名称），返回 {"owner/repo": {"email": "显示名"}}。"""
+    import yaml
+    config_path = (_project_root / "config" / "bot_config.yaml") if _project_root else Path(__file__).resolve().parent.parent / "config" / "bot_config.yaml"
+    result = {}
+    if not config_path.is_file():
+        return result
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        for item in (data or {}).get("github", {}).get("repos") or []:
+            if isinstance(item, dict):
+                owner = (item.get("owner") or "").strip()
+                repo = (item.get("repo") or "").strip()
+                if not owner or not repo:
+                    continue
+                key = f"{owner}/{repo}"
+                raw = item.get("user_names")
+                if isinstance(raw, dict):
+                    result[key] = {str(k).strip(): str(v).strip() for k, v in raw.items() if k and v}
+                else:
+                    result[key] = {}
     except Exception:
         pass
     return result
 
 
 def _get_github_repos_merged():
-    """合并 .env 与 config/bot_config.yaml 中的 GitHub 仓库列表，去重后返回 owner/repo 字符串列表。"""
+    """合并 config 与 .env 的仓库列表，config 优先（保证默认文档与左侧项目一致），去重后返回 owner/repo 字符串列表。"""
     import yaml
     seen = set()
     result = []
-    for o, r in settings.get_github_repos():
-        key = f"{o}/{r}"
-        if key not in seen:
-            seen.add(key)
-            result.append(key)
     config_path = (_project_root / "config" / "bot_config.yaml") if _project_root else Path(__file__).resolve().parent.parent / "config" / "bot_config.yaml"
     if config_path.is_file():
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-            repos = (data or {}).get("github") or {}
-            for item in (repos.get("repos") or []):
+            for item in (data or {}).get("github", {}).get("repos") or []:
                 if isinstance(item, dict):
                     owner = (item.get("owner") or "").strip()
                     repo = (item.get("repo") or "").strip()
@@ -128,10 +194,13 @@ def _get_github_repos_merged():
                         if key not in seen:
                             seen.add(key)
                             result.append(key)
-                else:
-                    pass
         except Exception:
             pass
+    for o, r in settings.get_github_repos():
+        key = f"{o}/{r}"
+        if key not in seen:
+            seen.add(key)
+            result.append(key)
     return result
 
 
@@ -169,6 +238,17 @@ async def chat_page():
     raise HTTPException(status_code=404, detail="Chat page not found")
 
 
+@app.get("/config")
+@app.get("/config/")
+async def config_page():
+    """仓库与用户配置页。"""
+    from fastapi.responses import FileResponse
+    html_path = os.path.join(_static_dir, "config.html")
+    if os.path.isfile(html_path):
+        return FileResponse(html_path)
+    raise HTTPException(status_code=404, detail="Config page not found")
+
+
 bot = ClawBot()
 email_sender = EmailSender()
 telegram_sender = TelegramSender()
@@ -186,8 +266,9 @@ async def root():
         "status": "running",
         "links": {
             "chat": "/chat",
-            "guide": "/guide",
             "daily": "/daily",
+            "guide": "/guide",
+            "config": "/config",
             "api_docs": "/docs",
             "generate_table": "/api/generate-table",
             "generate_ppt": "/api/generate-ppt",
@@ -308,15 +389,120 @@ async def generate_user_daily_report(
 
 @app.get("/config/github-repos")
 async def list_github_repos():
-    """返回已配置的 GitHub 仓库列表及每个仓库对应的 user_id（邮箱）。前端点击左侧项目时据此切换邮箱。"""
+    """返回已配置的 GitHub 仓库列表及每个仓库的 user_id、user_ids、user_names（邮箱->人员名）、显示名 name。"""
     repos = _get_github_repos_merged()
     user_map = _get_repo_user_id_map()
+    user_ids_map = _get_repo_user_ids_map()
+    user_names_map = _get_repo_user_names_map()
+    name_map = _get_repo_name_map()
     return {
         "repos": [
-            {"repo": r, "user_id": user_map.get(r)}
+            {
+                "repo": r,
+                "user_id": user_map.get(r),
+                "user_ids": user_ids_map.get(r) or (([user_map.get(r)] if user_map.get(r) else [])),
+                "user_names": user_names_map.get(r) or {},
+                "name": name_map.get(r) or r,
+            }
             for r in repos
         ]
     }
+
+
+def _load_repos_from_config():
+    """仅从 config/bot_config.yaml 读取 github.repos，用于配置页编辑。返回 [{"owner","repo","name","user_id"?, "user_ids"?, "user_names"?}, ...]。"""
+    import yaml
+    config_path = _get_bot_config_path()
+    if not config_path.is_file():
+        return []
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        raw = (data or {}).get("github") or {}
+        repos = raw.get("repos") or []
+        out = []
+        for item in repos:
+            if not isinstance(item, dict):
+                continue
+            owner = (item.get("owner") or "").strip()
+            repo = (item.get("repo") or "").strip()
+            if not owner or not repo:
+                continue
+            entry = {"owner": owner, "repo": repo, "name": (item.get("name") or item.get("description") or "").strip() or f"{owner}/{repo}"}
+            if item.get("user_ids") is not None and isinstance(item["user_ids"], list):
+                entry["user_ids"] = [str(x).strip() for x in item["user_ids"] if x]
+                if len(entry["user_ids"]) == 1:
+                    entry["user_id"] = entry["user_ids"][0]
+            else:
+                uid = (item.get("user_id") or "").strip()
+                if uid:
+                    entry["user_id"] = uid
+                    entry["user_ids"] = [uid]
+            entry["user_names"] = item.get("user_names") if isinstance(item.get("user_names"), dict) else {}
+            out.append(entry)
+        return out
+    except Exception:
+        return []
+
+
+@app.get("/api/config/repos")
+async def get_config_repos():
+    """配置页用：仅返回 config 文件中的仓库列表（不含 .env 合并），用于编辑。"""
+    return {"repos": _load_repos_from_config()}
+
+
+@app.put("/api/config/repos")
+async def save_config_repos(body: dict):
+    """配置页用：将仓库列表写回 config/bot_config.yaml。body.repos 为列表，每项含 owner, repo, name, user_id?, user_ids?, user_names?。"""
+    import yaml
+    repos = body.get("repos")
+    if not isinstance(repos, list):
+        raise HTTPException(status_code=400, detail="repos 必须为数组")
+    config_path = _get_bot_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    # 读取现有配置（保留其他 key）
+    data = {}
+    if config_path.is_file():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except Exception:
+            pass
+    if "github" not in data:
+        data["github"] = {}
+    # 构建要写入的 repos
+    out_repos = []
+    for item in repos:
+        if not isinstance(item, dict):
+            continue
+        owner = (item.get("owner") or "").strip()
+        repo = (item.get("repo") or "").strip()
+        if not owner or not repo:
+            continue
+        row = {"owner": owner, "repo": repo, "name": (item.get("name") or "").strip() or f"{owner}/{repo}"}
+        user_ids = item.get("user_ids")
+        if isinstance(user_ids, list) and user_ids:
+            ids = [str(x).strip() for x in user_ids if x]
+            if ids:
+                if len(ids) == 1:
+                    row["user_id"] = ids[0]
+                else:
+                    row["user_ids"] = ids
+        elif item.get("user_id"):
+            uid = str(item.get("user_id")).strip()
+            row["user_id"] = uid
+            row["user_ids"] = [uid]
+        unames = item.get("user_names")
+        if isinstance(unames, dict) and unames:
+            row["user_names"] = {str(k).strip(): str(v).strip() for k, v in unames.items() if k}
+        out_repos.append(row)
+    data["github"]["repos"] = out_repos
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="写入配置失败: " + str(e))
+    return {"ok": True, "repos": out_repos}
 
 
 @app.get("/api/download/generated/{filename}")
@@ -350,12 +536,11 @@ async def download_generated(filename: str):
 
 @app.get("/api/config/default-guide-repo")
 async def get_default_guide_repo():
-    """返回配置中的第一个仓库，供文档/代码分析页默认使用。"""
-    repos = settings.get_github_repos()
+    """返回配置中的第一个仓库（与左侧项目清单一致），供文档/代码分析页默认使用。"""
+    repos = _get_github_repos_merged()
     if not repos:
         return {"repo": None}
-    o, r = repos[0]
-    return {"repo": f"{o}/{r}"}
+    return {"repo": repos[0]}
 
 
 @app.get("/api/docs/code-analysis")
@@ -407,9 +592,10 @@ async def get_project_guide(repo: Optional[str] = None):
 
 @app.get("/activities")
 async def list_activities(
-    user_id: str,
     date: str,
     end_date: Optional[str] = None,
+    user_id: Optional[str] = None,
+    user_ids: Optional[str] = None,
     repo: Optional[str] = None,
     db=Depends(get_db),
 ):
@@ -417,9 +603,14 @@ async def list_activities(
     按用户和日期（或日期范围）查询原始活动列表。
     - date: 起始日期 YYYY-MM-DD
     - end_date: 可选，结束日期 YYYY-MM-DD，不传则只查 date 当天（日报）；传则查区间（周报）
-    - repo: 可选，仓库筛选，格式 owner/repo，不传则返回该用户所有仓库的活动
+    - user_id: 单人筛选（邮箱）
+    - user_ids: 多人筛选，逗号分隔邮箱，与 user_id 二选一；传 user_ids 时忽略 user_id
+    - repo: 可选，仓库筛选，格式 owner/repo
     """
     from datetime import datetime, timezone, timedelta
+
+    if not user_id and not user_ids:
+        raise HTTPException(status_code=400, detail="请提供 user_id 或 user_ids")
 
     try:
         day_start = datetime.fromisoformat(date).date()
@@ -438,13 +629,18 @@ async def list_activities(
 
     from src.models.activity import ActivityQuery
 
-    query = ActivityQuery(user_id=user_id, start_time=start, end_time=end)
+    if user_ids and user_ids.strip():
+        ids_list = [x.strip() for x in user_ids.split(",") if x.strip()]
+        query = ActivityQuery(user_ids=ids_list, start_time=start, end_time=end)
+    else:
+        query = ActivityQuery(user_id=(user_id or "").strip(), start_time=start, end_time=end)
     if repo and repo.strip():
         query.project_name = repo.strip()
     activities = activity_service.query_activities(db, query)
 
     return {
         "user_id": user_id,
+        "user_ids": user_ids.split(",") if user_ids else None,
         "date": day_start.isoformat(),
         "end_date": end_date,
         "count": len(activities),

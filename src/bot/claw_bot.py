@@ -49,6 +49,66 @@ class ClawBot:
         log.info(f"Created new conversation: {new_id}")
         return conversation
 
+    @staticmethod
+    def _build_conversation_context(messages: list, max_messages: int = 30, max_chars: int = 8000) -> str:
+        """把对话消息格式化为供「做文档/做PPT」使用的上下文，包含用户提供的资料与讨论内容。"""
+        lines = []
+        count = 0
+        total = 0
+        for m in messages:
+            if getattr(m, "role", None) == "system":
+                continue
+            role = getattr(m, "role", "user")
+            content = (getattr(m, "content", None) or "").strip()
+            if not content:
+                continue
+            label = "用户" if role == "user" else "助手"
+            line = f"{label}：{content}"
+            if total + len(line) + 1 > max_chars and lines:
+                break
+            lines.append(line)
+            total += len(line) + 1
+            count += 1
+            if count >= max_messages:
+                break
+        return "\n".join(lines) if lines else ""
+
+    async def _classify_generation_intent(
+        self, msg_raw: str, conversation: Conversation
+    ) -> Optional[str]:
+        """
+        根据当前对话和用户最新消息，用 AI 判断用户是否希望生成 PPT/文档/Word/表格。
+        返回 generate_ppt | generate_document | generate_word | generate_table | None。
+        用于在关键词未命中时仍能理解「把上面的做到PPT里」等表述。
+        """
+        ctx = self._build_conversation_context(conversation.messages[:-1], max_messages=8, max_chars=2000)
+        prompt = f"""用户最新一条消息：「{msg_raw}」
+对话上下文（前几条，供参考）：
+{ctx[:1500] if ctx else '（无）'}
+
+请判断用户此刻是否希望你**直接生成并给出下载链接**的产物。只选其一回复，不要任何解释：
+- generate_ppt：用户希望生成 PPT/幻灯片/汇报（包括「把上面的内容做到PPT里」「把对话内容做成汇报」等）
+- generate_document：用户希望生成 Markdown 文档
+- generate_word：用户希望生成 Word 文档
+- generate_table：用户希望生成表格/Excel/CSV
+- none：只是普通聊天、追问、或不需要生成文件
+
+只回复上述英文标签之一。"""
+        try:
+            raw = await self.ai_provider.generate_response(
+                [{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=20,
+            )
+            label = (raw or "").strip().lower()
+            for k in ("generate_ppt", "generate_document", "generate_word", "generate_table"):
+                if k in label:
+                    return k
+            return None
+        except Exception as e:
+            log.warning(f"Intent classification failed: {e}")
+            return None
+
     async def process_message(self, request: BotRequest) -> BotResponse:
         """Process a user message and generate a response."""
         try:
@@ -75,11 +135,15 @@ class ClawBot:
                 "做好ppt", "做ppt", "帮我做ppt", "直接做好ppt", "生成ppt", "做一个ppt",
                 "直接把ppt做好", "把ppt做好", "直接做好", "做个ppt", "弄个ppt",
                 "帮我做", "直接做", "做一个", "做一份", "生成一个",
+                "加入到ppt", "加入到 ppt", "做到ppt里", "做到 ppt", "把上面的内容加入",
+                "把上面的内容做到", "把这些做到ppt", "把刚才说的做成", "根据上面的内容做",
+                "把对话内容做成", "上面的内容做", "内容加入到ppt", "做成ppt", "做成 ppt",
+                "把如上的内容", "如上的内容添加", "添加到ppt", "添加到 ppt", "把以上内容",
             )
             has_ppt_topic = any(x in msg for x in _ppt_any)
             has_ppt_phrase = any(k in msg for k in _ppt_phrases)
-            short_and_do_ppt = len(msg_raw) < 120 and ("做" in msg_raw or "弄" in msg_raw or "生成" in msg_raw) and has_ppt_topic
-            is_ppt = has_ppt_phrase or short_and_do_ppt or has_ppt_topic and "做" in msg_raw
+            short_and_do_ppt = len(msg_raw) < 120 and ("做" in msg_raw or "弄" in msg_raw or "生成" in msg_raw or "加入" in msg_raw) and has_ppt_topic
+            is_ppt = has_ppt_phrase or short_and_do_ppt or (has_ppt_topic and ("做" in msg_raw or "加入" in msg_raw))
             _doc_keywords = (
                 "创建文档", "写文档", "生成文档", "做个文档", "写一份文档", "写一个文档",
                 "帮我写文档", "帮我写一份文档", "生成一份文档", "创建一份文档",
@@ -90,6 +154,27 @@ class ClawBot:
                 "word文档", "生成word文档", "做个word", "写一份word", "帮我做word", "生成一份word",
             )
             is_word = any(k in msg_raw for k in _word_keywords) and len(msg_raw) < 800
+            # 关键词未命中时，根据当前语境用 AI 判断是否要做 PPT/文档/Word/表格（避免枚举不全）
+            if not (is_table or is_ppt or is_doc or is_word) and len(msg_raw) <= 400:
+                hint_words = (
+                    "ppt", "文档", "word", "表格", "幻灯片", "汇报", "演示",
+                    "做成", "生成", "写到", "放到", "加入", "添加", "弄成", "搞成", "导出",
+                    "做到", "放进", "弄到", "搞到", "上面的", "如上的", "以上的", "对话内容", "这些内容",
+                )
+                if any(h in msg_raw for h in hint_words):
+                    intent = await self._classify_generation_intent(msg_raw, conversation)
+                    if intent == "generate_ppt":
+                        is_ppt = True
+                        log.info(f"Intent classified as PPT: {msg_raw[:60]}...")
+                    elif intent == "generate_document":
+                        is_doc = True
+                        log.info(f"Intent classified as document: {msg_raw[:60]}...")
+                    elif intent == "generate_word":
+                        is_word = True
+                        log.info(f"Intent classified as Word: {msg_raw[:60]}...")
+                    elif intent == "generate_table":
+                        is_table = True
+                        log.info(f"Intent classified as table: {msg_raw[:60]}...")
             if is_table and not is_ppt:
                 log.info(f"Table intent detected, generating table for: {msg_raw[:80]}...")
                 try:
@@ -149,11 +234,22 @@ class ClawBot:
                             topic = msg_raw.replace(t, " ").strip() or topic
                             break
                     topic = topic.strip() or "通用汇报"
-                    if len(topic) > 50:
+                    ctx = self._build_conversation_context(conversation.messages[:-1])
+                    # 无历史对话时，把本条消息当作「用户提供的需求与资料」
+                    if not (ctx and ctx.strip()) and msg_raw:
+                        ctx = f"用户（本次需求与资料）：\n{msg_raw}"
+                    # 用户说「把上面的内容/把这些/把刚才说的/如上的内容 加入/做到/添加 PPT」且确有对话历史时，用对话内容做主题
+                    if ctx and ctx.strip() and any(k in msg_raw for k in (
+                        "上面的内容", "这些内容", "刚才说的", "对话内容", "上面说的", "如上的内容", "以上内容",
+                    )):
+                        if any(k in msg_raw for k in ("加入", "做到", "做成", "做到ppt", "加入到", "添加")):
+                            title = "汇报"
+                            topic = "根据当前对话内容生成汇报，请按对话中的要点整理成页。"
+                    if len(topic) > 50 and title != "汇报":
                         title = topic[:30].strip() + "…"
-                    else:
+                    elif title == "汇报" and topic and topic != "通用汇报" and len(topic) <= 50:
                         title = topic or title
-                    name = await generate_ppt_and_save(title, topic)
+                    name = await generate_ppt_and_save(title, topic, conversation_context=ctx)
                     reply = f"PPT 已生成。\n\n[下载 PPT]({base}/{name})"
                     conversation.add_message(role="assistant", content=reply)
                     return BotResponse(
@@ -180,7 +276,10 @@ class ClawBot:
                 log.info(f"Word intent detected: {msg_raw[:80]}...")
                 try:
                     from src.services.content_generator import generate_docx_and_save
-                    name = await generate_docx_and_save(msg_raw.strip())
+                    ctx = self._build_conversation_context(conversation.messages[:-1])
+                    if not (ctx and ctx.strip()) and msg_raw:
+                        ctx = f"用户（本次需求与资料）：\n{msg_raw}"
+                    name = await generate_docx_and_save(msg_raw.strip(), conversation_context=ctx)
                     base = "/api/download/generated"
                     reply = f"Word 文档已生成。\n\n[下载 Word]({base}/{name})"
                     conversation.add_message(role="assistant", content=reply)
@@ -219,7 +318,10 @@ class ClawBot:
                 log.info(f"Document intent detected: {msg_raw[:80]}...")
                 try:
                     from src.services.content_generator import generate_document_and_save
-                    name = await generate_document_and_save(msg_raw.strip())
+                    ctx = self._build_conversation_context(conversation.messages[:-1])
+                    if not (ctx and ctx.strip()) and msg_raw:
+                        ctx = f"用户（本次需求与资料）：\n{msg_raw}"
+                    name = await generate_document_and_save(msg_raw.strip(), conversation_context=ctx)
                     base = "/api/download/generated"
                     reply = f"文档已生成。\n\n[下载 Markdown]({base}/{name})"
                     conversation.add_message(role="assistant", content=reply)

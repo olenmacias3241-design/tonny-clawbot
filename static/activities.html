@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>日报 / 周报 · Claw Bot</title>
+  <title>日报周报 · Claw Bot</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -136,12 +136,15 @@
     .report li a { color: inherit; text-decoration: none; }
     .report li a:hover { text-decoration: underline; color: var(--accent); }
     .report .time { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted); margin-right: 0.5rem; }
+    .report .user { font-size: 0.8rem; color: var(--text-muted); margin-right: 0.5rem; }
     .empty-state { text-align: center; padding: 3rem 1rem; color: var(--text-muted); }
     .empty-state p { margin-bottom: 0.5rem; }
     .empty-state small { font-size: 0.85rem; }
     .header-row { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.5rem; }
     .btn-link { background: none; border: none; color: var(--text-muted); font-size: 0.85rem; cursor: pointer; text-decoration: underline; padding: 0; }
     .btn-link:hover { color: var(--accent); }
+    .user-config-hint { font-size: 0.75rem; font-weight: normal; color: var(--text-muted); margin-left: 0.35rem; text-decoration: none; }
+    .user-config-hint:hover { color: var(--accent); }
     .modal-overlay {
       display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000;
       align-items: center; justify-content: center; padding: 2rem;
@@ -186,10 +189,41 @@
     .sidebar-item:hover { background: rgba(34,197,94,0.06); }
     .sidebar-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(34,197,94,0.1); }
     .sidebar-item.all { color: var(--text-muted); }
+    .sidebar-item .name { font-weight: 500; }
+    .sidebar-item .repo { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; }
     .main { flex: 1; overflow: auto; padding: 2rem 1.5rem; }
+    .current-project-banner {
+      display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; padding: 0.6rem 1rem;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      font-size: 0.95rem;
+    }
+    .current-project-banner .label { color: var(--text-muted); }
+    .current-project-banner .value { color: var(--accent); font-weight: 500; }
+    .user-list-strip { display: none; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+    .user-list-strip.show { display: flex; }
+    .user-list-strip .label { font-size: 0.85rem; color: var(--text-muted); margin-right: 0.25rem; }
+    .user-chip { padding: 0.4rem 0.85rem; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 0.88rem; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+    .user-chip:hover { background: rgba(34,197,94,0.08); border-color: var(--accent); }
+    .user-chip.active { background: rgba(34,197,94,0.15); border-color: var(--accent); color: var(--accent); }
+    .user-chip .email { font-size: 0.75rem; color: var(--text-muted); margin-left: 0.35rem; }
+    .content-view { display: none; }
+    .msg { margin-bottom: 1rem; display: flex; gap: 0.75rem; }
+    .msg.user { flex-direction: row-reverse; }
+    .msg-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--border); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 1rem; }
+    .msg.user .msg-avatar { background: var(--accent); }
+    .msg-bubble { max-width: 85%; padding: 0.75rem 1rem; border-radius: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .msg.user .msg-bubble { background: var(--accent); color: var(--bg); }
+    .msg.bot .msg-bubble { background: var(--surface); border: 1px solid var(--border); }
+    .msg.bot.error .msg-bubble { color: var(--danger); }
   </style>
 </head>
 <body>
+  <header class="top-strip" style="display:flex;align-items:center;gap:1.5rem;padding:0.75rem 1.5rem;background:var(--surface);border-bottom:1px solid var(--border);font-size:0.9rem">
+    <a href="/chat" style="color:var(--text);text-decoration:none;font-weight:600">Claw Bot</a>
+    <a href="/daily" style="color:var(--accent);text-decoration:none;font-weight:500">日报周报</a>
+    <a href="/guide" style="color:var(--text-muted);text-decoration:none">仓库文档</a>
+    <a href="/config" style="color:var(--text-muted);text-decoration:none">配置</a>
+  </header>
   <div class="app-wrap">
     <aside class="sidebar">
       <div class="sidebar-title">项目清单</div>
@@ -201,21 +235,40 @@
   <div class="container">
     <div class="header-row">
       <div>
-        <h1>日报 / 周报</h1>
-        <p class="subtitle">按用户邮箱和日期查看 GitHub 提交记录；左侧选择仓库后点击「加载」查看该仓库的日报或周报</p>
+        <h1>日报周报</h1>
+        <p class="subtitle">按用户邮箱和日期查看 GitHub 提交；左侧选择项目后点击「加载」</p>
       </div>
-      <button class="btn btn-link" id="btnGuide">仓库文档与代码分析</button>
+      <div class="tabs main-tabs" style="margin-bottom:0">
+        <button class="tab active" data-view="report">报告</button>
+        <button class="tab" data-view="docs">项目文档</button>
+        <button class="tab" data-view="chat">对话</button>
+      </div>
+    </div>
+    <div class="current-project-banner" id="currentProjectBanner">
+      <span class="label">当前项目：</span>
+      <span class="value" id="currentProjectName">全部</span>
+    </div>
+    <div class="user-list-strip" id="userListStrip">
+      <span class="label">查看提交：</span>
+      <div id="userChips"></div>
     </div>
 
+    <div id="reportView" class="content-view" style="display:block">
     <div class="panel">
       <div class="tabs">
         <button class="tab active" data-mode="daily">日报</button>
         <button class="tab" data-mode="weekly">周报</button>
       </div>
       <div class="form-row">
-        <div class="field">
-          <label>用户邮箱 (user_id)</label>
-          <input type="text" id="userId" placeholder="shanglily01@gmail.com" value="shanglily01@gmail.com">
+        <div class="field" id="fieldUserId">
+          <label>用户 <a href="/config" class="user-config-hint" title="在配置页为每个仓库设置成员（邮箱与人员名称）">在配置页设置</a></label>
+          <input type="text" id="userId" placeholder="选项目后自动填充或输入邮箱" value="" data-email="">
+        </div>
+        <div class="field" id="fieldUserFilter" style="display:none">
+          <label>按用户筛选</label>
+          <select id="userFilter" style="padding:0.4rem 0.6rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:0.9rem;min-width:200px">
+            <option value="all">全部</option>
+          </select>
         </div>
         <div class="field" id="fieldDate">
           <label>日期</label>
@@ -234,28 +287,39 @@
     <div class="panel">
       <div class="report" id="reportContent"></div>
     </div>
-  </div>
-  </div>
-  </div>
+    </div>
 
-  <div class="modal-overlay" id="guideModal">
-    <div class="modal-box">
-      <div class="modal-header">
-        <h3>项目说明与代码分析</h3>
-        <div style="display:flex;align-items:center;gap:0.5rem">
-          <div class="tabs" style="margin:0">
-            <button class="tab modal-tab active" data-doc="guide">项目说明</button>
-            <button class="tab modal-tab" data-doc="code">代码分析</button>
-          </div>
-          <button class="modal-close" id="modalClose">&times;</button>
+    <div id="docsView" class="content-view" style="display:none">
+      <div class="panel">
+        <div class="tabs">
+          <button class="tab doc-tab active" data-doc="guide">项目说明</button>
+          <button class="tab doc-tab" data-doc="code">代码分析</button>
         </div>
+        <div class="report docs-content" id="docsContent" style="min-height:360px"><p style="color:var(--text-muted)">请先左侧选择项目，或点击「项目说明」/「代码分析」加载</p></div>
       </div>
-      <div class="modal-body" id="guideContent">
-        <p style="color:var(--text-muted)">加载中...</p>
+    </div>
+    <div id="chatView" class="content-view" style="display:none;flex-direction:column;flex:1;min-height:0">
+      <div id="chatMessages" style="flex:1;overflow-y:auto;padding:1rem;max-width:720px;margin:0 auto;width:100%;min-height:360px"></div>
+      <div class="chat-input-bar" style="padding:1rem 1.5rem;border-top:1px solid var(--border);flex-shrink:0">
+        <div class="model-wrap" style="max-width:720px;margin:0 auto 0.5rem;display:flex;align-items:center;gap:0.5rem">
+          <label style="color:var(--text-muted);font-size:0.85rem">模型：</label>
+          <select id="chatModel" style="padding:0.4rem 0.6rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:0.85rem;cursor:pointer">
+            <option value="">服务器默认</option>
+            <option value="gpt-4o-mini" selected>gpt-4o-mini</option>
+            <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+            <option value="gpt-4o">gpt-4o</option>
+            <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
+          </select>
+        </div>
+        <div style="max-width:720px;margin:0 auto;display:flex;gap:0.5rem">
+          <input type="text" id="chatInput" placeholder="输入消息，与龙虾对话…" autocomplete="off" style="flex:1;padding:0.75rem 1rem;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:0.95rem" />
+          <button type="button" id="chatSend" style="padding:0.75rem 1.25rem;border-radius:8px;border:none;background:var(--accent);color:var(--bg);font-weight:500;cursor:pointer;font-size:0.95rem">发送</button>
+        </div>
       </div>
     </div>
   </div>
-
+  </div>
+  </div>
   <script>
     const API_BASE = '';
     const userIdEl = document.getElementById('userId');
@@ -273,18 +337,49 @@
     dateEl.value = today;
     endDateEl.value = today;
 
+    function getThisWeekMonday() {
+      const d = new Date();
+      const day = d.getDay();
+      const diff = day === 0 ? 6 : day - 1;
+      d.setDate(d.getDate() - diff);
+      return d.toISOString().slice(0, 10);
+    }
+
+    function setWeeklyRangeToThisWeek() {
+      dateEl.value = getThisWeekMonday();
+      endDateEl.value = today;
+    }
+
     let repoList = [];
     let selectedRepo = '';
+    let selectedUserIds = [];  // 当前项目配置的邮箱列表（多人时用于「全部」）
+    let selectedUserNames = {}; // 当前项目邮箱 -> 人员名称
+    let selectedUserFilter = 'all'; // 'all' 或邮箱，用于多用户时查看谁的提交
+    let repoNameMap = {};
 
     fetch(`${API_BASE}/config/github-repos`).then(r=>r.json()).then(d=>{
       const list = d.repos || [];
-      repoList = list.map(x => typeof x === 'string' ? { repo: x, user_id: null } : { repo: x.repo || '', user_id: x.user_id || null });
+      repoList = list.map(x => ({
+        repo: typeof x === 'string' ? x : (x.repo || ''),
+        user_id: (x && x.user_id) ? x.user_id.trim() : null,
+        user_ids: Array.isArray(x.user_ids) ? x.user_ids.map(e=>String(e).trim()).filter(Boolean) : (x && x.user_id ? [x.user_id.trim()] : []),
+        user_names: (x && x.user_names && typeof x.user_names === 'object') ? x.user_names : {},
+        name: (x && x.name) ? x.name.trim() : (typeof x === 'string' ? x : (x.repo || ''))
+      })).filter(item => item.repo);
+      repoList.forEach(item => { repoNameMap[item.repo] = item.name || item.repo; });
       const el = document.getElementById('sidebarList');
-      let html = '<button type="button" class="sidebar-item all active" data-repo="" data-user-id="">全部</button>';
+      const fieldUserFilter = document.getElementById('fieldUserFilter');
+      const userFilterEl = document.getElementById('userFilter');
+      const userListStrip = document.getElementById('userListStrip');
+      const userChipsEl = document.getElementById('userChips');
+      let html = '<button type="button" class="sidebar-item all active" data-repo="" data-user-id="" data-name="全部" data-user-ids="[]" data-user-names="{}">全部</button>';
       repoList.forEach(item => {
-        const repo = item.repo || '';
-        const uid = (item.user_id || '').trim();
-        html += `<button type="button" class="sidebar-item" data-repo="${escapeHtml(repo)}" data-user-id="${escapeHtml(uid)}">${escapeHtml(repo)}</button>`;
+        const repo = item.repo;
+        const uid = item.user_id || '';
+        const name = item.name || repo;
+        const uids = item.user_ids || (uid ? [uid] : []);
+        const unames = item.user_names || {};
+        html += `<button type="button" class="sidebar-item" data-repo="${escapeHtml(repo)}" data-user-id="${escapeHtml(uid)}" data-name="${escapeHtml(name)}" data-user-ids="${escapeHtml(JSON.stringify(uids))}" data-user-names="${escapeHtml(JSON.stringify(unames))}"><span class="name">${escapeHtml(name)}</span><span class="repo">${escapeHtml(repo)}</span></button>`;
       });
       el.innerHTML = html;
       el.querySelectorAll('.sidebar-item').forEach(btn => {
@@ -293,30 +388,90 @@
           btn.classList.add('active');
           selectedRepo = (btn.dataset.repo || '').trim();
           const uid = (btn.dataset.userId || '').trim();
-          if (uid) userIdEl.value = uid;
+          const name = (btn.dataset.name || '').trim() || selectedRepo || '全部';
+          try { selectedUserIds = JSON.parse(btn.dataset.userIds || '[]'); } catch (_) { selectedUserIds = uid ? [uid] : []; }
+          try { selectedUserNames = JSON.parse(btn.dataset.userNames || '{}'); } catch (_) { selectedUserNames = {}; }
+          selectedUserFilter = 'all';
+          if (selectedUserIds.length > 1) {
+            fieldUserFilter.style.display = 'flex';
+            userFilterEl.innerHTML = '<option value="all">全部</option>' + selectedUserIds.map(e=>{
+              const label = selectedUserNames[e] ? `${selectedUserNames[e]} (${e})` : e;
+              return `<option value="${escapeHtml(e)}">${escapeHtml(label)}</option>`;
+            }).join('');
+            userFilterEl.value = 'all';
+            userIdEl.value = '';
+            userIdEl.placeholder = '已按「查看提交」选择用户';
+            userListStrip.classList.add('show');
+            userChipsEl.innerHTML = '<button type="button" class="user-chip active" data-user="all">全部</button>' + selectedUserIds.map(email => {
+              const label = selectedUserNames[email] || email;
+              return `<button type="button" class="user-chip" data-user="${escapeHtml(email)}" title="${escapeHtml(email)}"><span>${escapeHtml(label)}</span><span class="email">${escapeHtml(email)}</span></button>`;
+            }).join('');
+            userChipsEl.querySelectorAll('.user-chip').forEach(chip => {
+              chip.addEventListener('click', () => {
+                const u = chip.dataset.user;
+                selectedUserFilter = u || 'all';
+                userChipsEl.querySelectorAll('.user-chip').forEach(c => c.classList.remove('active'));
+                chip.classList.add('active');
+                userFilterEl.value = u || 'all';
+                load();
+              });
+            });
+          } else {
+            fieldUserFilter.style.display = 'none';
+            userListStrip.classList.remove('show');
+            userChipsEl.innerHTML = '';
+            const email = selectedUserIds[0] || uid || '';
+            userIdEl.value = selectedUserNames[email] ? selectedUserNames[email] : email;
+            userIdEl.dataset.email = email || '';
+            userIdEl.placeholder = '选项目后自动填充或输入邮箱';
+          }
+          if (uid) userIdEl.value = userIdEl.value || uid;
+          const bannerEl = document.getElementById('currentProjectName');
+          if (bannerEl) bannerEl.textContent = name;
           load();
+          if (docsView.style.display !== 'none') {
+            const activeDoc = document.querySelector('.doc-tab.active');
+            if (activeDoc && activeDoc.dataset.doc === 'code') loadCodeAnalysisInPanel();
+            else loadProjectGuideInPanel();
+          }
         });
+      });
+      userFilterEl.addEventListener('change', function onUserFilterChange() {
+        if (selectedUserIds.length > 1) {
+          selectedUserFilter = userFilterEl.value || 'all';
+          const uc = document.getElementById('userChips');
+          if (uc) uc.querySelectorAll('.user-chip').forEach(c => c.classList.toggle('active', (c.dataset.user || 'all') === selectedUserFilter));
+          load();
+        }
       });
     }).catch(()=>{});
 
-    const guideModal = document.getElementById('guideModal');
-    const guideContent = document.getElementById('guideContent');
-    let cachedGuide = null, cachedCode = null;
+    const docsContent = document.getElementById('docsContent');
+    const reportView = document.getElementById('reportView');
+    const docsView = document.getElementById('docsView');
+    const chatView = document.getElementById('chatView');
+    let cachedGuideByRepo = {};
+    let cachedCodeByRepo = {};
 
-    async function loadProjectGuide() {
-      if (cachedGuide) { guideContent.innerHTML = cachedGuide; return; }
-      guideContent.innerHTML = '<p style="color:var(--text-muted)">加载中...</p>';
+    function getDocsRepo() { return selectedRepo || (repoList[0] ? repoList[0].repo : ''); }
+
+    async function loadProjectGuideInPanel() {
+      const repo = getDocsRepo();
+      if (!repo) { docsContent.innerHTML = '<p style="color:var(--text-muted)">请先在左侧选择一个项目</p>'; return; }
+      if (cachedGuideByRepo[repo]) { docsContent.innerHTML = cachedGuideByRepo[repo]; return; }
+      docsContent.innerHTML = '<p style="color:var(--text-muted)">加载中...</p>';
       try {
-        const res = await fetch(`${API_BASE}/api/docs/project-guide`);
+        const res = await fetch(`${API_BASE}/api/docs/project-guide?repo=${encodeURIComponent(repo)}`);
         const data = await res.json();
         if (res.ok && data.content) {
-          cachedGuide = (typeof marked !== 'undefined' ? marked.parse(data.content) : '<pre>' + escapeHtml(data.content) + '</pre>');
-          guideContent.innerHTML = cachedGuide;
+          const html = (typeof marked !== 'undefined' ? marked.parse(data.content) : '<pre>' + escapeHtml(data.content) + '</pre>');
+          cachedGuideByRepo[repo] = html;
+          docsContent.innerHTML = html;
         } else {
-          guideContent.innerHTML = '<p style="color:var(--danger)">加载失败</p>';
+          docsContent.innerHTML = '<p class="danger">' + (data.detail ? escapeHtml(data.detail) : '加载失败') + '</p>';
         }
       } catch (e) {
-        guideContent.innerHTML = '<p style="color:var(--danger)">加载失败: ' + escapeHtml(e.message) + '</p>';
+        docsContent.innerHTML = '<p style="color:var(--danger)">加载失败: ' + escapeHtml(e.message) + '</p>';
       }
     }
 
@@ -352,49 +507,115 @@
       return html;
     }
 
-    async function loadCodeAnalysis() {
-      if (cachedCode) { guideContent.innerHTML = cachedCode; return; }
-      guideContent.innerHTML = '<p style="color:var(--text-muted)">分析代码中...</p>';
+    async function loadCodeAnalysisInPanel() {
+      const repo = getDocsRepo();
+      if (!repo) { docsContent.innerHTML = '<p style="color:var(--text-muted)">请先在左侧选择一个项目</p>'; return; }
+      if (cachedCodeByRepo[repo]) { docsContent.innerHTML = cachedCodeByRepo[repo]; return; }
+      docsContent.innerHTML = '<p style="color:var(--text-muted)">分析代码中...</p>';
       try {
-        const res = await fetch(`${API_BASE}/api/docs/code-analysis`);
+        const res = await fetch(`${API_BASE}/api/docs/code-analysis?repo=${encodeURIComponent(repo)}`);
         const data = await res.json();
         if (res.ok && data.sections) {
-          cachedCode = renderCodeAnalysis(data);
-          guideContent.innerHTML = cachedCode;
+          const html = renderCodeAnalysis(data);
+          cachedCodeByRepo[repo] = html;
+          docsContent.innerHTML = html;
         } else {
-          guideContent.innerHTML = '<p style="color:var(--danger)">分析失败</p>';
+          docsContent.innerHTML = '<p style="color:var(--danger)">分析失败</p>';
         }
       } catch (e) {
-        guideContent.innerHTML = '<p style="color:var(--danger)">分析失败: ' + escapeHtml(e.message) + '</p>';
+        docsContent.innerHTML = '<p style="color:var(--danger)">分析失败: ' + escapeHtml(e.message) + '</p>';
       }
     }
 
-    document.getElementById('btnGuide').addEventListener('click', () => {
-      const q = selectedRepo ? '?repo=' + encodeURIComponent(selectedRepo) : '';
-      window.location.href = '/guide' + q;
-    });
-    document.querySelectorAll('.modal-tab').forEach(t => {
+    document.querySelectorAll('.main-tabs .tab').forEach(t => {
       t.addEventListener('click', () => {
-        document.querySelectorAll('.modal-tab').forEach(x => x.classList.remove('active'));
+        document.querySelectorAll('.main-tabs .tab').forEach(x => x.classList.remove('active'));
         t.classList.add('active');
-        if (t.dataset.doc === 'code') loadCodeAnalysis();
-        else loadProjectGuide();
+        const view = t.dataset.view;
+        reportView.style.display = view === 'report' ? 'block' : 'none';
+        docsView.style.display = view === 'docs' ? 'block' : 'none';
+        chatView.style.display = view === 'chat' ? 'flex' : 'none';
+        if (view === 'docs') {
+          const activeDoc = document.querySelector('.doc-tab.active');
+          if (activeDoc && activeDoc.dataset.doc === 'code') loadCodeAnalysisInPanel();
+          else loadProjectGuideInPanel();
+        }
       });
     });
-    document.getElementById('modalClose').addEventListener('click', () => guideModal.classList.remove('show'));
-    guideModal.addEventListener('click', (e) => { if (e.target === guideModal) guideModal.classList.remove('show'); });
 
-    document.querySelectorAll('.tab').forEach(t => {
+    document.querySelectorAll('.doc-tab').forEach(t => {
       t.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+        document.querySelectorAll('.doc-tab').forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        if (t.dataset.doc === 'code') loadCodeAnalysisInPanel();
+        else loadProjectGuideInPanel();
+      });
+    });
+
+    (function initChatPanel() {
+      const chatMessagesEl = document.getElementById('chatMessages');
+      const chatInputEl = document.getElementById('chatInput');
+      const chatSendBtn = document.getElementById('chatSend');
+      const chatModelEl = document.getElementById('chatModel');
+      let chatConversationId = null;
+      function addChatMessage(role, content, isError) {
+        const div = document.createElement('div');
+        div.className = 'msg ' + (role === 'user' ? 'user' : 'bot') + (isError ? ' error' : '');
+        const avatar = role === 'user' ? '你' : '🦞';
+        const bubble = document.createElement('div');
+        bubble.className = 'msg-bubble';
+        bubble.innerHTML = content ? (content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>').replace(/\[([^\]]+)\]\((\/api\/download\/generated\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color:var(--accent)">$1</a>')) : '';
+        div.innerHTML = '<div class="msg-avatar">' + avatar + '</div>';
+        div.appendChild(bubble);
+        chatMessagesEl.appendChild(div);
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+      }
+      async function sendChat() {
+        const text = (chatInputEl.value || '').trim();
+        if (!text) return;
+        chatInputEl.value = '';
+        addChatMessage('user', text);
+        chatSendBtn.disabled = true;
+        const loading = document.createElement('div');
+        loading.className = 'msg bot';
+        loading.innerHTML = '<div class="msg-avatar">🦞</div><div class="msg-bubble" style="color:var(--text-muted);font-size:0.9rem">龙虾正在想…</div>';
+        chatMessagesEl.appendChild(loading);
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        try {
+          const body = { message: text };
+          if (chatConversationId) body.conversation_id = chatConversationId;
+          const model = (chatModelEl && chatModelEl.value) ? chatModelEl.value.trim() : '';
+          if (model) body.model = model;
+          const res = await fetch(API_BASE + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const data = await res.json();
+          loading.remove();
+          if (res.ok && data.conversation_id) {
+            chatConversationId = data.conversation_id;
+            const show = data.message || data.error || '（无回复）';
+            addChatMessage('bot', show);
+          } else {
+            addChatMessage('bot', data.detail || data.error || data.message || '请求失败', true);
+          }
+        } catch (e) {
+          loading.remove();
+          addChatMessage('bot', '网络错误: ' + (e.message || '请稍后重试'), true);
+        }
+        chatSendBtn.disabled = false;
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+      }
+      chatSendBtn.addEventListener('click', sendChat);
+      chatInputEl.addEventListener('keydown', function(e) { if (e.key === 'Enter') sendChat(); });
+    })();
+
+    document.querySelectorAll('.tab[data-mode]').forEach(t => {
+      t.addEventListener('click', () => {
+        document.querySelectorAll('.tab[data-mode]').forEach(x => x.classList.remove('active'));
         t.classList.add('active');
         mode = t.dataset.mode;
         fieldDateEl.querySelector('label').textContent = mode === 'weekly' ? '开始日期' : '日期';
         fieldEndDateEl.style.display = mode === 'weekly' ? 'flex' : 'none';
         if (mode === 'weekly') {
-          const d = new Date(dateEl.value);
-          d.setDate(d.getDate() + 6);
-          endDateEl.value = d.toISOString().slice(0, 10);
+          setWeeklyRangeToThisWeek();
         }
       });
     });
@@ -416,6 +637,10 @@
 
     function formatDate(ts) {
       return new Date(ts).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' });
+    }
+
+    function displayNameFor(a) {
+      return (selectedUserNames[a.user_id] || a.user_name || a.user_id || '').trim() || '';
     }
 
     function renderReport(activities, date, endDate) {
@@ -461,12 +686,14 @@
           list.forEach(a => {
             const title = a.title || a.type;
             const link = a.url ? `<a href="${a.url}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : escapeHtml(title);
-            html += `<li><span class="time">${formatTime(a.timestamp)}</span>${link}</li>`;
+            const who = displayNameFor(a);
+            html += `<li><span class="time">${formatTime(a.timestamp)}</span>${who ? `<span class="user">${escapeHtml(who)}</span>` : ''}${link}</li>`;
           });
           html += '</ul>';
         });
       } else {
         html += '<h2>一、本周主要工作</h2>';
+        html += '<p style="font-size:0.9rem;color:var(--text-muted);margin-bottom:1rem">加载周期内全部提交，以下按天分类。</p>';
         const byDate = {};
         activities.forEach(a => {
           const d = new Date(a.timestamp).toISOString().slice(0, 10);
@@ -476,17 +703,29 @@
           byDate[d][p].push(a);
         });
         const sortedDates = Object.keys(byDate).sort();
-        sortedDates.forEach(d => {
-          html += `<div class="date-group"><div class="date-label">${formatDate(d)}</div>`;
-          Object.entries(byDate[d]).forEach(([proj, list]) => {
-            html += `<div class="project-name">${escapeHtml(proj)}</div><ul>`;
-            list.forEach(a => {
-              const title = a.title || a.type;
-              const link = a.url ? `<a href="${a.url}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : escapeHtml(title);
-              html += `<li><span class="time">${formatTime(a.timestamp)}</span>${link}</li>`;
+        const allDaysInRange = [];
+        let d = new Date(date + 'T12:00:00Z');
+        const endD = new Date(endDate + 'T12:00:00Z');
+        while (d <= endD) {
+          allDaysInRange.push(d.toISOString().slice(0, 10));
+          d.setDate(d.getDate() + 1);
+        }
+        allDaysInRange.forEach(dKey => {
+          html += `<div class="date-group"><div class="date-label">${formatDate(dKey)}</div>`;
+          if (byDate[dKey]) {
+            Object.entries(byDate[dKey]).forEach(([proj, list]) => {
+              html += `<div class="project-name">${escapeHtml(proj)}</div><ul>`;
+              list.forEach(a => {
+                const title = a.title || a.type;
+                const link = a.url ? `<a href="${a.url}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : escapeHtml(title);
+                const who = displayNameFor(a);
+                html += `<li><span class="time">${formatTime(a.timestamp)}</span>${who ? `<span class="user">${escapeHtml(who)}</span>` : ''}${link}</li>`;
+              });
+              html += '</ul>';
             });
-            html += '</ul>';
-          });
+          } else {
+            html += '<p style="font-size:0.9rem;color:var(--text-muted);margin:0.25rem 0">该日无提交</p>';
+          }
           html += '</div>';
         });
       }
@@ -495,21 +734,37 @@
     }
 
     async function load() {
-      const user_id = userIdEl.value.trim();
       const date = dateEl.value;
-      if (!user_id || !date) {
-        setStatus('请填写用户邮箱和日期', 'error');
+      if (!date) {
+        setStatus('请选择日期', 'error');
         return;
       }
+      const fieldUserFilter = document.getElementById('fieldUserFilter');
+      const userFilterEl = document.getElementById('userFilter');
+      const useMultiUser = selectedUserIds.length > 1;
+      let url = `${API_BASE}/activities?date=${encodeURIComponent(date)}`;
+      if (useMultiUser) {
+        if (selectedUserFilter === 'all' || !selectedUserFilter) {
+          url += `&user_ids=${encodeURIComponent(selectedUserIds.join(','))}`;
+        } else {
+          url += `&user_id=${encodeURIComponent(selectedUserFilter)}`;
+        }
+      } else {
+        const user_id = (userIdEl.dataset.email || userIdEl.value || '').trim();
+        if (!user_id) {
+          setStatus('请填写用户或在上方选择用户', 'error');
+          return;
+        }
+        url += `&user_id=${encodeURIComponent(user_id)}`;
+      }
+      if (mode === 'weekly') {
+        const end_date = endDateEl.value;
+        if (!end_date) throw new Error('请选择结束日期');
+        url += `&end_date=${encodeURIComponent(end_date)}`;
+      }
+      if (selectedRepo) url += `&repo=${encodeURIComponent(selectedRepo)}`;
       setStatus('加载中...', 'loading');
       try {
-        let url = `${API_BASE}/activities?user_id=${encodeURIComponent(user_id)}&date=${date}`;
-        if (mode === 'weekly') {
-          const end_date = endDateEl.value;
-          if (!end_date) throw new Error('请选择结束日期');
-          url += `&end_date=${end_date}`;
-        }
-        if (selectedRepo) url += `&repo=${encodeURIComponent(selectedRepo)}`;
         const res = await fetch(url);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || res.statusText);
@@ -536,6 +791,11 @@
 
     btnLoad.addEventListener('click', load);
     btnSync.addEventListener('click', sync);
+    userIdEl.addEventListener('input', function() {
+      const email = userIdEl.dataset.email || '';
+      const display = email ? (selectedUserNames[email] || email) : '';
+      if (userIdEl.value.trim() !== display) userIdEl.removeAttribute('data-email');
+    });
   </script>
 </body>
 </html>

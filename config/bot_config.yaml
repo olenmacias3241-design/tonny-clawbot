@@ -1,42 +1,39 @@
-# Claw Bot AI Configuration
-
 bot:
-  name: "Claw Bot"
-  personality: "helpful, harmless, and honest"
-  system_prompt: |
-    You are Claw Bot, an intelligent AI assistant.
-    You are helpful, harmless, and honest.
-    You provide clear and concise responses.
-    When you don't know something, you admit it.
+  name: Claw Bot
+  personality: helpful, harmless, and honest
+  system_prompt: 'You are Claw Bot, an intelligent AI assistant.
 
+    You are helpful, harmless, and honest.
+
+    You provide clear and concise responses.
+
+    When you don''t know something, you admit it.
+
+    '
 features:
-  # Enable/disable features
   conversation_history: true
   context_awareness: true
   multi_turn_conversation: true
-
 ai_settings:
-  # AI generation parameters
   temperature: 0.7
   max_tokens: 2000
   top_p: 1.0
-
 rate_limiting:
-  # Rate limiting settings
   enabled: false
   requests_per_minute: 60
   requests_per_hour: 1000
-
-# 龙虾仓库（日报/周报数据源）
-# 每个仓库可配置 user_id（Git 提交邮箱），点击左侧项目时自动切换对应用户邮箱
 github:
   display_name: 龙虾
   repos:
-    - owner: shanglily01-lab
-      repo: shanglily01-lab
-      user_id: shanglily01@gmail.com
-      description: shanglily01-lab 仓库
-    - owner: olenmacias3241-design
-      repo: tonny-clawbot
-      user_id: olenmacias3241@gmail.com
-      description: 龙虾 Claw Bot 主仓库，用于日报/周报同步
+  - owner: shanglily01-lab
+    repo: test2
+    name: 超级大脑
+    user_id: shanglily01@gmail.com
+    user_names:
+      shanglily01@gmail.com: tonny
+  - owner: olenmacias3241-design
+    repo: tonny-clawbot
+    name: 龙虾
+    user_id: olenmacias3241@gmail.com
+    user_names:
+      olenmacias3241@gmail.com: tonny

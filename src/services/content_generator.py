@@ -199,23 +199,38 @@ def _parse_structured_slides(text: str) -> Optional[Dict[str, Any]]:
     }
 
 
-async def generate_ppt_outline(title: str, topic: str) -> List[Dict[str, Any]]:
+async def generate_ppt_outline(
+    title: str,
+    topic: str,
+    conversation_context: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """
-    根据标题和主题用 AI 生成 PPT 大纲，返回 [{"title":"幻灯片标题","points":["要点1","要点2"]}, ...]。
+    根据标题、主题与（可选）对话记录用 AI 生成 PPT 大纲（先出结构，有对话时尽量带关键信息），
+    返回 [{"title":"幻灯片标题","points":["要点1","要点2"]}, ...]。
+    若有 conversation_context，后续会再调用 expand 步骤把每页要点展开成具体内容。
     """
     provider = get_ai_provider()
     system = (
-        "你是一个 PPT 大纲助手。用户给出汇报标题和主题，你只输出一个 JSON 数组，不要任何其他文字。"
-        "数组的每个元素表示一页幻灯片：{\"title\":\"该页标题\",\"points\":[\"要点1\",\"要点2\",\"要点3\"]}。"
-        "通常 5～8 页：封面/目录、背景/现状、分析/方案、数据/案例、总结/下一步等。"
+        "你是一个 PPT 大纲助手。根据用户给出的汇报标题、主题，以及可能提供的【对话记录】或【用户本次需求与资料】，生成 PPT 大纲。"
+        "只输出一个 JSON 数组，不要任何其他文字。"
+        "数组的每个元素：{\"title\":\"该页标题\",\"points\":[\"要点1\",\"要点2\",\"要点3\"]}。"
+        "要求："
+        "1. 若用户给的是完整需求说明（如包含「主要包括」「包括」「需要涵盖」或并列多条：批量xxx、批量xxx、传播到xxx），必须按需求中的**每一个要点单独成页或明确展开**，每页的 title 和 points 紧扣该要点，写出可执行、可落地的内容方向，不要笼统的「背景介绍」「总结」敷衍。"
+        "2. 若有【对话记录】或【用户本次需求与资料】，必须从中提炼真实内容：各页标题和 points 要体现用户提到的具体模块、步骤、平台、工具，不要写空泛的模板句。"
+        "3. 每页 3～6 条 points，每条是一句完整表述或关键信息（可先写简版，后续会再展开）。"
+        "4. 通常 5～8 页：封面（标题页，points 可为空）、可选的目录、然后按用户需求的各模块逐页展开、最后总结与下一步。"
         "只输出 JSON 数组。"
     )
-    user = f"汇报标题：{title}\n主题/内容方向：{topic}\n请生成 PPT 大纲（JSON 数组）。"
+    user_parts = [f"汇报标题：{title}\n主题/内容方向：{topic}"]
+    if conversation_context and conversation_context.strip():
+        user_parts.append(f"\n【对话记录与资料】（请根据以下内容生成有实质内容的大纲）\n{conversation_context.strip()}")
+    user_parts.append("\n请生成 PPT 大纲（JSON 数组）。")
+    user = "".join(user_parts)
     try:
         raw = await provider.generate_response(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             temperature=0.4,
-            max_tokens=2000,
+            max_tokens=4000,
         )
         raw = raw.strip()
         m = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
@@ -237,6 +252,57 @@ async def generate_ppt_outline(title: str, topic: str) -> List[Dict[str, Any]]:
     except json.JSONDecodeError as e:
         log.error(f"PPT outline JSON parse error: {e}, raw: {raw[:200]}")
         raise ValueError("生成内容不是有效 JSON，请重试") from e
+
+
+async def expand_ppt_outline_with_conversation(
+    outline: List[Dict[str, Any]],
+    conversation_context: str,
+    title: str,
+) -> List[Dict[str, Any]]:
+    """
+    根据对话记录把大纲里每一页的 points 展开成具体、可读的要点（必须从对话中提炼数据、案例、结论），
+    而不是只保留提纲。封面页不展开，其余页 3～6 条完整句。
+    """
+    if not (conversation_context and conversation_context.strip()):
+        return outline
+    provider = get_ai_provider()
+    outline_json = json.dumps(outline, ensure_ascii=False, indent=2)
+    system = (
+        "你是 PPT 内容撰写助手。你会收到一份 PPT 大纲（JSON 数组）和【对话记录】或【用户本次需求与资料】。"
+        "你的任务：把每一页的 points 扩展成 3～6 条**具体、可读、可执行**的要点，每条必须是一句或两句话。"
+        "**硬性要求**："
+        "1. 要点内容必须从【对话记录/用户需求与资料】中提炼，包含其中提到的具体模块、步骤、平台、工具、做法（如「批量创建文案」「批量生成视频」「传播到主流媒体」等），每一条都要有实质信息，禁止写「分析现状」「加强管理」等空泛句。"
+        "2. 若用户需求里明确列了多条（如 A、B、C），对应页的 points 必须分别展开 A/B/C 的具体做法、工具或步骤，不要合并成笼统一句。"
+        "封面页（通常是第一页）的 points 保持为空数组 []。"
+        "只输出一个 JSON 数组，格式与输入大纲完全一致：每项 {\"title\":\"...\", \"points\":[\"...\",\"...\"]}，不要任何其他文字。"
+    )
+    user = f"汇报标题：{title}\n\n【当前大纲】\n{outline_json}\n\n【对话记录/用户本次需求与资料】（请根据以下内容填充每页的 points，写出具体、可执行的要点）\n{conversation_context.strip()}\n\n请输出扩展后的完整 JSON 数组。"
+    try:
+        raw = await provider.generate_response(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.3,
+            max_tokens=4000,
+        )
+        raw = raw.strip()
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+        if m:
+            raw = m.group(1).strip()
+        data = json.loads(raw)
+        if not isinstance(data, list) or len(data) != len(outline):
+            log.warning(f"Expand PPT outline returned different length, using original outline")
+            return outline
+        out = []
+        for i, item in enumerate(data):
+            if isinstance(item, dict):
+                slide_title = str(item.get("title", outline[i].get("title", "幻灯片")))
+                points = [str(p) for p in item.get("points", []) if p]
+                out.append({"title": slide_title, "points": points[:8]})
+            else:
+                out.append(outline[i])
+        return out
+    except (json.JSONDecodeError, IndexError) as e:
+        log.warning(f"Expand PPT outline failed: {e}, using original outline")
+        return outline
 
 
 def build_pptx_bytes(
@@ -300,7 +366,7 @@ def build_pptx_bytes(
                     s.shapes.title.text = item.get("title", "")
                 except Exception:
                     pass
-                points = item.get("points", [])[:6]
+                points = item.get("points", [])[:8]
                 try:
                     body = s.placeholders[1]
                     tf = body.text_frame
@@ -341,6 +407,19 @@ def build_pptx_bytes(
             pass
 
     blank = prs.slide_layouts[6]
+
+    def _is_section_slide(item: dict) -> bool:
+        """无要点时用章节页版式（全幅色块 + 居中大标题）。"""
+        points = item.get("points", []) or []
+        return len(points) == 0
+
+    def _is_key_message_slide(item: dict) -> bool:
+        """1～2 条且较长时，用「要点/金句」版式（大号正文，无 bullet）。"""
+        points = item.get("points", []) or []
+        if len(points) not in (1, 2):
+            return False
+        avg_len = sum(len(str(p)) for p in points) / len(points)
+        return avg_len >= 35
 
     # ---------- 封面：左侧竖条 + 大标题 + 副标题，右侧留白 ----------
     slide = prs.slides.add_slide(blank)
@@ -389,29 +468,91 @@ def build_pptx_bytes(
     foot_line.fill.fore_color.rgb = accent
     foot_line.line.fill.background()
 
-    # ---------- 内容页：顶条 + 左竖条 + 标题 + 卡片 + 要点 ----------
+    # ---------- 内容页：按类型选版式（章节页 / 要点页 / 普通内容页）----------
     for item in outline:
         slide = prs.slides.add_slide(blank)
-        # 顶条
+        slide_title = item.get("title", "")
+        points = item.get("points", [])[:8]
+
+        if _is_section_slide(item):
+            # 章节页：全幅色块 + 居中白字大标题
+            bar = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(0), Inches(2.2), Inches(13.333), Inches(3.1)
+            )
+            bar.fill.solid()
+            bar.fill.fore_color.rgb = accent
+            bar.line.fill.background()
+            tx = slide.shapes.add_textbox(Inches(1), Inches(3.0), Inches(11.333), Inches(1.5))
+            tf = tx.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.text = slide_title or " "
+            p.font.size = Pt(32)
+            p.font.bold = True
+            p.font.color.rgb = white
+            try:
+                p.font.name = FONT_TITLE
+            except Exception:
+                pass
+            p.alignment = PP_ALIGN.CENTER
+            continue
+
+        if _is_key_message_slide(item):
+            # 要点/金句页：页标题 + 大号正文（1～2 段），无 bullet
+            strip = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(13.333), Inches(0.14)
+            )
+            strip.fill.solid()
+            strip.fill.fore_color.rgb = title_bar_bg
+            strip.line.fill.background()
+            vbar = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(0.5), Inches(0.5), Pt(4), Inches(0.65)
+            )
+            vbar.fill.solid()
+            vbar.fill.fore_color.rgb = accent
+            vbar.line.fill.background()
+            title_box = slide.shapes.add_textbox(Inches(0.85), Inches(0.42), Inches(11.5), Inches(0.9))
+            tft = title_box.text_frame
+            tft.word_wrap = True
+            pt = tft.paragraphs[0]
+            pt.text = slide_title
+            pt.font.size = Pt(26)
+            pt.font.bold = True
+            pt.font.color.rgb = primary
+            try:
+                pt.font.name = FONT_TITLE
+            except Exception:
+                pass
+            body_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.6), Inches(11.7), Inches(5.5))
+            tfb = body_box.text_frame
+            tfb.word_wrap = True
+            for i, point in enumerate(points):
+                p = tfb.paragraphs[0] if i == 0 else tfb.add_paragraph()
+                p.space_before = Pt(24)
+                p.space_after = Pt(12)
+                r = p.add_run()
+                r.text = point if isinstance(point, str) else str(point)
+                _set_font(r, 18, bold=False, color=body_color)
+            continue
+
+        # 普通内容页：顶条 + 左竖条 + 标题 + 卡片 + 要点
         strip = slide.shapes.add_shape(
             MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(13.333), Inches(0.14)
         )
         strip.fill.solid()
         strip.fill.fore_color.rgb = title_bar_bg
         strip.line.fill.background()
-        # 标题左侧竖条
         vbar = slide.shapes.add_shape(
             MSO_SHAPE.RECTANGLE, Inches(0.5), Inches(0.5), Pt(4), Inches(0.65)
         )
         vbar.fill.solid()
         vbar.fill.fore_color.rgb = accent
         vbar.line.fill.background()
-        # 页标题
         title_box = slide.shapes.add_textbox(Inches(0.85), Inches(0.42), Inches(11.5), Inches(0.9))
         tft = title_box.text_frame
         tft.word_wrap = True
         pt = tft.paragraphs[0]
-        pt.text = item.get("title", "")
+        pt.text = slide_title
         pt.font.size = Pt(26)
         pt.font.bold = True
         pt.font.color.rgb = primary
@@ -420,7 +561,6 @@ def build_pptx_bytes(
         except Exception:
             pass
         pt.space_after = Pt(4)
-        # 内容卡片（圆角、浅底、细边）
         content_bg = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.55), Inches(1.35), Inches(12.2), Inches(5.75)
         )
@@ -428,8 +568,6 @@ def build_pptx_bytes(
         content_bg.fill.fore_color.rgb = card_bg
         content_bg.line.color.rgb = card_border
         content_bg.line.width = Pt(0.5)
-        # 要点
-        points = item.get("points", [])[:6]
         body_box = slide.shapes.add_textbox(Inches(0.95), Inches(1.65), Inches(11.4), Inches(5.3))
         tfb = body_box.text_frame
         tfb.word_wrap = True
@@ -488,29 +626,31 @@ async def generate_table_and_save(prompt: str):
     return csv_name, xlsx_name
 
 
-async def generate_document_content(prompt: str) -> str:
-    """根据用户描述用 AI 生成一篇文档正文（Markdown 格式）。"""
+async def generate_document_content(prompt: str, conversation_context: Optional[str] = None) -> str:
+    """根据用户描述与（可选）对话/资料用 AI 生成一篇完整文档正文（Markdown），内容必须基于对话与资料，不是提纲或模板。"""
     provider = get_ai_provider()
-    system = """你是文档撰写助手。用户会描述想要创建的文档主题或需求，你输出一篇结构清晰、可直接使用的 Markdown 文档正文。
-要求：
-- 使用 Markdown 语法：标题用 # ## ###，列表用 - 或 1.，段落之间空行。
-- 若有标题，文档开头先写一个一级标题概括主题。
-- 内容充实、分段合理，长度适中（一般 300～1500 字，按用户需求调整）。
-- 只输出文档正文，不要输出「以下是文档」等前言。"""
-    user = f"请根据以下描述生成一篇完整的 Markdown 文档：\n\n{prompt}"
+    system = """你是文档撰写助手。根据用户描述以及可能提供的【对话记录】或用户粘贴的【资料】，撰写一篇**完整、可直接使用**的 Markdown 文档正文（不是提纲也不是模板）。
+硬性要求：
+- 若有【对话记录】或用户提供的资料，文档内容必须**基于其中的具体信息**撰写：使用对话里的数据、案例、结论、人名、产品名等，写出完整段落和列表，禁止只写小标题或空泛句。
+- 文档应是成形的正文：有 # ## ### 标题、有段落、有列表或要点，总长度一般 500～2000 字（按需求调整），读者可直接当正式文档使用。
+- 使用 Markdown 语法，段落间空行，只输出文档正文，不要「以下是文档」等前言。"""
+    user_parts = [f"用户本次需求：\n{prompt}"]
+    if conversation_context and conversation_context.strip():
+        user_parts.append(f"\n\n【对话记录与用户提供的资料】（请根据以下内容写出完整文档，不要只给提纲）\n{conversation_context.strip()}")
+    user = "".join(user_parts)
     raw = await provider.generate_response(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         temperature=0.4,
-        max_tokens=4000,
+        max_tokens=6000,
     )
     return (raw or "").strip()
 
 
-async def generate_document_and_save(prompt: str) -> str:
-    """生成文档并保存为 .md，返回文件名。"""
+async def generate_document_and_save(prompt: str, conversation_context: Optional[str] = None) -> str:
+    """生成文档并保存为 .md，返回文件名。可传入对话上下文以基于对话内容生成。"""
     import uuid
     log.info("generate_document_and_save: calling AI for document content")
-    content = await generate_document_content(prompt)
+    content = await generate_document_content(prompt, conversation_context=conversation_context)
     uid = uuid.uuid4().hex[:12]
     base = _generated_dir()
     name = f"doc_{uid}.md"
@@ -640,11 +780,11 @@ def _markdown_to_docx_bytes(md_text: str) -> bytes:
     return buf.read()
 
 
-async def generate_docx_and_save(prompt: str) -> str:
-    """根据用户描述用 AI 生成文档并保存为 .docx，返回文件名。"""
+async def generate_docx_and_save(prompt: str, conversation_context: Optional[str] = None) -> str:
+    """根据用户描述与（可选）对话记录用 AI 生成文档并保存为 .docx，返回文件名。"""
     import uuid
     log.info("generate_docx_and_save: calling AI for document content")
-    content = await generate_document_content(prompt)
+    content = await generate_document_content(prompt, conversation_context=conversation_context)
     docx_bytes = _markdown_to_docx_bytes(content)
     uid = uuid.uuid4().hex[:12]
     base = _generated_dir()
@@ -654,10 +794,16 @@ async def generate_docx_and_save(prompt: str) -> str:
     return name
 
 
-async def generate_ppt_and_save(title: str, topic: str):
-    """根据标题和主题用 AI 生成大纲并保存 .pptx。"""
+async def generate_ppt_and_save(
+    title: str,
+    topic: str,
+    conversation_context: Optional[str] = None,
+) -> str:
+    """根据标题、主题与（可选）对话记录用 AI 生成大纲，有对话时再展开成具体内容，然后保存 .pptx。"""
     import uuid
-    outline = await generate_ppt_outline(title, topic)
+    outline = await generate_ppt_outline(title, topic, conversation_context=conversation_context)
+    if conversation_context and conversation_context.strip():
+        outline = await expand_ppt_outline_with_conversation(outline, conversation_context, title)
     content = build_pptx_bytes(title, outline)
     uid = uuid.uuid4().hex[:12]
     base = _generated_dir()

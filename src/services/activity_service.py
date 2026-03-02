@@ -57,7 +57,9 @@ class ActivityService:
         stmt = select(ActivityORM)
         conditions = []
 
-        if query.user_id:
+        if query.user_ids:
+            conditions.append(ActivityORM.user_id.in_(query.user_ids))
+        elif query.user_id:
             conditions.append(ActivityORM.user_id == query.user_id)
         if query.project_id:
             conditions.append(ActivityORM.project_id == query.project_id)

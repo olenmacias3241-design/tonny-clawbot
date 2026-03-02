@@ -62,10 +62,25 @@
     }
     .sidebar-item:hover { background: rgba(34,197,94,0.06); }
     .sidebar-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(34,197,94,0.1); }
+    .sidebar-item .name { font-weight: 500; }
+    .sidebar-item .repo { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; }
     .main { flex: 1; overflow: auto; padding: 2rem 1.5rem; }
+    .current-project-banner {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem; margin-bottom: 1rem; padding: 0.6rem 1rem;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.95rem;
+    }
+    .current-project-banner .label { color: var(--text-muted); }
+    .current-project-banner .value { color: var(--accent); font-weight: 500; }
+    .current-project-banner .repo { font-size: 0.8rem; color: var(--text-muted); }
   </style>
 </head>
 <body>
+  <header class="top-strip" style="display:flex;align-items:center;gap:1.5rem;padding:0.75rem 1.5rem;background:var(--surface);border-bottom:1px solid var(--border);font-size:0.9rem">
+    <a href="/chat" style="color:var(--text);text-decoration:none;font-weight:600">Claw Bot</a>
+    <a href="/daily" style="color:var(--text-muted);text-decoration:none">日报周报</a>
+    <a href="/guide" style="color:var(--accent);text-decoration:none;font-weight:500">仓库文档</a>
+    <a href="/config" style="color:var(--text-muted);text-decoration:none">配置</a>
+  </header>
   <div class="app-wrap">
     <aside class="sidebar">
       <div class="sidebar-title">项目清单</div>
@@ -77,13 +92,18 @@
   <div class="container">
     <div class="top-bar">
       <h1>仓库文档与代码分析</h1>
-      <a class="btn-link" href="/daily">← 日报 / 周报</a>
+    </div>
+    <div class="current-project-banner" id="currentProjectBanner">
+      <span class="label">当前项目：</span>
+      <span class="value" id="currentProjectName">—</span>
+      <span class="repo" id="currentProjectRepo"></span>
     </div>
     <div class="repo-bar">
       <label>仓库：</label>
-      <input type="text" id="repoInput" placeholder="owner/repo 如 shanglily01/test2" />
+      <input type="text" id="repoInput" placeholder="owner/repo 如 olenmacias3241-design/tonny-clawbot" />
       <button type="button" id="repoGo">查看</button>
     </div>
+    <p class="current-project" id="currentProjectLabel" style="display:none"></p>
     <div class="tabs">
       <button class="tab active" data-doc="guide">项目说明</button>
       <button class="tab" data-doc="code">代码分析</button>
@@ -100,6 +120,7 @@
     const repoInput = document.getElementById('repoInput');
     let cachedGuide = null, cachedCode = null;
     let currentRepo = '';
+    let repoNameMap = {};
 
     function getRepoParam() {
       const params = new URLSearchParams(window.location.search);
@@ -122,6 +143,7 @@
       } else {
         repoInput.value = currentRepo;
       }
+      updateCurrentProjectLabel();
     }
 
     function escapeHtml(s) {
@@ -136,8 +158,10 @@
     }
 
     function setRepoAndLoad(repo) {
-      currentRepo = (repo || '').trim();
+      repo = (repo || '').trim();
+      currentRepo = repo;
       repoInput.value = currentRepo;
+      updateCurrentProjectLabel();
       const url = new URL(window.location.href);
       if (currentRepo) url.searchParams.set('repo', currentRepo);
       else url.searchParams.delete('repo');
@@ -146,13 +170,22 @@
         btn.classList.toggle('active', (btn.dataset.repo || '') === currentRepo);
       });
       const activeTab = document.querySelector('.tab.active');
-      if (activeTab && activeTab.dataset.doc === 'code') loadCodeAnalysis();
-      else loadProjectGuide();
+      if (activeTab && activeTab.dataset.doc === 'code') loadCodeAnalysis(repo);
+      else loadProjectGuide(repo);
     }
 
-    async function loadProjectGuide() {
-      const key = currentRepo || '_local_';
-      if (cachedGuide && cachedGuide[key]) { mainContent.innerHTML = cachedGuide[key]; return; }
+    function updateCurrentProjectLabel() {
+      const nameEl = document.getElementById('currentProjectName');
+      const repoEl = document.getElementById('currentProjectRepo');
+      if (nameEl) nameEl.textContent = currentRepo ? (repoNameMap[currentRepo] || currentRepo) : '—';
+      if (repoEl) { repoEl.textContent = currentRepo ? currentRepo : ''; repoEl.style.display = currentRepo ? 'inline' : 'none'; }
+    }
+
+    async function loadProjectGuide(forceRepo) {
+      const repo = (forceRepo !== undefined && forceRepo !== null) ? String(forceRepo).trim() : currentRepo;
+      const key = repo || '_local_';
+      if (!repo && cachedGuide && cachedGuide[key]) { mainContent.innerHTML = cachedGuide[key]; return; }
+      if (repo && cachedGuide && cachedGuide[key]) { mainContent.innerHTML = cachedGuide[key]; return; }
       mainContent.innerHTML = '<p style="color:var(--text-muted)">加载中...</p>';
       const timeout = setTimeout(() => {
         if (mainContent.innerHTML === '<p style="color:var(--text-muted)">加载中...</p>') {
@@ -160,7 +193,8 @@
         }
       }, 15000);
       try {
-        const res = await fetch(apiUrl('/api/docs/project-guide'));
+        const url = repo ? `${API_BASE}/api/docs/project-guide?repo=${encodeURIComponent(repo)}` : `${API_BASE}/api/docs/project-guide`;
+        const res = await fetch(url);
         const data = await res.json().catch(() => ({}));
         clearTimeout(timeout);
         if (res.ok && data.content) {
@@ -215,12 +249,15 @@
       return html;
     }
 
-    async function loadCodeAnalysis() {
-      const key = currentRepo || '_local_';
-      if (cachedCode && cachedCode[key]) { mainContent.innerHTML = cachedCode[key]; return; }
+    async function loadCodeAnalysis(forceRepo) {
+      const repo = (forceRepo !== undefined && forceRepo !== null) ? String(forceRepo).trim() : currentRepo;
+      const key = repo || '_local_';
+      if (!repo && cachedCode && cachedCode[key]) { mainContent.innerHTML = cachedCode[key]; return; }
+      if (repo && cachedCode && cachedCode[key]) { mainContent.innerHTML = cachedCode[key]; return; }
       mainContent.innerHTML = '<p style="color:var(--text-muted)">分析代码中...</p>';
       try {
-        const res = await fetch(apiUrl('/api/docs/code-analysis'));
+        const url = repo ? `${API_BASE}/api/docs/code-analysis?repo=${encodeURIComponent(repo)}` : `${API_BASE}/api/docs/code-analysis`;
+        const res = await fetch(url);
         const data = await res.json();
         if (res.ok && data.sections) {
           if (!cachedCode) cachedCode = {};
@@ -244,12 +281,15 @@
 
     fetch(`${API_BASE}/config/github-repos`).then(r=>r.json()).then(d=>{
       const list = d.repos || [];
-      const repos = list.map(x => typeof x === 'string' ? x : (x.repo || ''));
+      const repos = list.map(x => typeof x === 'string' ? { repo: x, name: x } : { repo: x.repo || '', name: (x.name || x.repo || '').trim() });
+      repos.forEach(item => { if (item.repo) repoNameMap[item.repo] = item.name || item.repo; });
       const el = document.getElementById('sidebarList');
       let html = '';
-      repos.forEach(repo => {
-        if (!repo) return;
-        html += `<button type="button" class="sidebar-item" data-repo="${escapeHtml(repo)}">${escapeHtml(repo)}</button>`;
+      repos.forEach(item => {
+        if (!item.repo) return;
+        const repo = item.repo;
+        const name = item.name || repo;
+        html += `<button type="button" class="sidebar-item" data-repo="${escapeHtml(repo)}" data-name="${escapeHtml(name)}"><span class="name">${escapeHtml(name)}</span><span class="repo">${escapeHtml(repo)}</span></button>`;
       });
       if (!html) html = '<p style="padding:0 1.25rem;color:var(--text-muted);font-size:0.85rem">未配置仓库</p>';
       el.innerHTML = html;
@@ -259,12 +299,14 @@
       document.querySelectorAll('#sidebarList .sidebar-item').forEach(btn => {
         btn.classList.toggle('active', (btn.dataset.repo || '') === currentRepo);
       });
+      updateCurrentProjectLabel();
     }).catch(() => {
       document.getElementById('sidebarList').innerHTML = '<p style="padding:0 1.25rem;color:var(--text-muted);font-size:0.85rem">加载失败</p>';
     });
 
     (async function init() {
       await setRepoFromUrl();
+      updateCurrentProjectLabel();
       document.querySelectorAll('.tab').forEach(t => {
         t.addEventListener('click', () => {
           document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
