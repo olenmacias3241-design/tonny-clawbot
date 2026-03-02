@@ -171,18 +171,38 @@
       font-size: 0.85rem; color: var(--text-muted);
     }
     .repos-panel .tag { background: var(--border); padding: 0.2rem 0.5rem; border-radius: 4px; }
+    .app-wrap { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 220px; flex-shrink: 0;
+      background: var(--surface); border-right: 1px solid var(--border);
+      padding: 1.25rem 0; overflow-y: auto;
+    }
+    .sidebar-title { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 0 1.25rem 0.75rem; }
+    .sidebar-item {
+      display: block; width: 100%; padding: 0.6rem 1.25rem; font-size: 0.9rem; color: var(--text);
+      background: none; border: none; border-left: 3px solid transparent; cursor: pointer;
+      text-align: left; font-family: inherit; transition: background 0.15s, border-color 0.15s;
+    }
+    .sidebar-item:hover { background: rgba(34,197,94,0.06); }
+    .sidebar-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(34,197,94,0.1); }
+    .sidebar-item.all { color: var(--text-muted); }
+    .main { flex: 1; overflow: auto; padding: 2rem 1.5rem; }
   </style>
 </head>
 <body>
+  <div class="app-wrap">
+    <aside class="sidebar">
+      <div class="sidebar-title">项目清单</div>
+      <div id="sidebarList">
+        <button type="button" class="sidebar-item all active" data-repo="">全部</button>
+      </div>
+    </aside>
+    <div class="main">
   <div class="container">
     <div class="header-row">
       <div>
         <h1>日报 / 周报</h1>
-        <p class="subtitle">按用户邮箱和日期查看 GitHub 提交记录，支持日报、周报格式统计</p>
-        <div class="repos-panel" id="reposPanel">
-          <span>已配置仓库：</span>
-          <span id="reposList"></span>
-        </div>
+        <p class="subtitle">按用户邮箱和日期查看 GitHub 提交记录；左侧选择仓库后点击「加载」查看该仓库的日报或周报</p>
       </div>
       <button class="btn btn-link" id="btnGuide">仓库文档与代码分析</button>
     </div>
@@ -214,6 +234,8 @@
     <div class="panel">
       <div class="report" id="reportContent"></div>
     </div>
+  </div>
+  </div>
   </div>
 
   <div class="modal-overlay" id="guideModal">
@@ -251,13 +273,30 @@
     dateEl.value = today;
     endDateEl.value = today;
 
+    let repoList = [];
+    let selectedRepo = '';
+
     fetch(`${API_BASE}/config/github-repos`).then(r=>r.json()).then(d=>{
-      const el = document.getElementById('reposList');
-      if (d.repos?.length) {
-        el.innerHTML = d.repos.map(r => `<span class="tag">${escapeHtml(r)}</span>`).join('');
-      } else {
-        el.textContent = '未配置';
-      }
+      const list = d.repos || [];
+      repoList = list.map(x => typeof x === 'string' ? { repo: x, user_id: null } : { repo: x.repo || '', user_id: x.user_id || null });
+      const el = document.getElementById('sidebarList');
+      let html = '<button type="button" class="sidebar-item all active" data-repo="" data-user-id="">全部</button>';
+      repoList.forEach(item => {
+        const repo = item.repo || '';
+        const uid = (item.user_id || '').trim();
+        html += `<button type="button" class="sidebar-item" data-repo="${escapeHtml(repo)}" data-user-id="${escapeHtml(uid)}">${escapeHtml(repo)}</button>`;
+      });
+      el.innerHTML = html;
+      el.querySelectorAll('.sidebar-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+          el.querySelectorAll('.sidebar-item').forEach(x => x.classList.remove('active'));
+          btn.classList.add('active');
+          selectedRepo = (btn.dataset.repo || '').trim();
+          const uid = (btn.dataset.userId || '').trim();
+          if (uid) userIdEl.value = uid;
+          load();
+        });
+      });
     }).catch(()=>{});
 
     const guideModal = document.getElementById('guideModal');
@@ -330,7 +369,10 @@
       }
     }
 
-    document.getElementById('btnGuide').addEventListener('click', () => { window.location.href = '/guide'; });
+    document.getElementById('btnGuide').addEventListener('click', () => {
+      const q = selectedRepo ? '?repo=' + encodeURIComponent(selectedRepo) : '';
+      window.location.href = '/guide' + q;
+    });
     document.querySelectorAll('.modal-tab').forEach(t => {
       t.addEventListener('click', () => {
         document.querySelectorAll('.modal-tab').forEach(x => x.classList.remove('active'));
@@ -467,6 +509,7 @@
           if (!end_date) throw new Error('请选择结束日期');
           url += `&end_date=${end_date}`;
         }
+        if (selectedRepo) url += `&repo=${encodeURIComponent(selectedRepo)}`;
         const res = await fetch(url);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || res.statusText);

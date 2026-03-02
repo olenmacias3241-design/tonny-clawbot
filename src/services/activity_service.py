@@ -61,6 +61,8 @@ class ActivityService:
             conditions.append(ActivityORM.user_id == query.user_id)
         if query.project_id:
             conditions.append(ActivityORM.project_id == query.project_id)
+        if query.project_name:
+            conditions.append(ActivityORM.project_name == query.project_name)
         if query.start_time:
             conditions.append(ActivityORM.timestamp >= query.start_time)
         if query.end_time:

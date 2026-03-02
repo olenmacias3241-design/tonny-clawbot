@@ -51,6 +51,7 @@ class ActivityQuery(BaseModel):
 
     user_id: Optional[str] = None
     project_id: Optional[str] = None
+    project_name: Optional[str] = None  # e.g. "owner/repo" 按仓库筛选
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     types: Optional[List[str]] = None

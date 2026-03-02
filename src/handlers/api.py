@@ -1,5 +1,6 @@
 """FastAPI handlers for Claw Bot."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -78,6 +79,66 @@ if _static_dir is None:
     _project_root = Path(__file__).resolve().parent.parent
 if os.path.isdir(_static_dir):
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+
+def _get_repo_user_id_map():
+    """从 config/bot_config.yaml 的 github.repos 读取每个仓库对应的 user_id（邮箱），返回 {"owner/repo": "email"}。"""
+    import yaml
+    config_path = (_project_root / "config" / "bot_config.yaml") if _project_root else Path(__file__).resolve().parent.parent / "config" / "bot_config.yaml"
+    result = {}
+    if not config_path.is_file():
+        return result
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        for item in (data or {}).get("github", {}).get("repos") or []:
+            if isinstance(item, dict):
+                owner = (item.get("owner") or "").strip()
+                repo = (item.get("repo") or "").strip()
+                user_id = (item.get("user_id") or "").strip()
+                if owner and repo and user_id:
+                    result[f"{owner}/{repo}"] = user_id
+    except Exception:
+        pass
+    return result
+
+
+def _get_github_repos_merged():
+    """合并 .env 与 config/bot_config.yaml 中的 GitHub 仓库列表，去重后返回 owner/repo 字符串列表。"""
+    import yaml
+    seen = set()
+    result = []
+    for o, r in settings.get_github_repos():
+        key = f"{o}/{r}"
+        if key not in seen:
+            seen.add(key)
+            result.append(key)
+    config_path = (_project_root / "config" / "bot_config.yaml") if _project_root else Path(__file__).resolve().parent.parent / "config" / "bot_config.yaml"
+    if config_path.is_file():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            repos = (data or {}).get("github") or {}
+            for item in (repos.get("repos") or []):
+                if isinstance(item, dict):
+                    owner = (item.get("owner") or "").strip()
+                    repo = (item.get("repo") or "").strip()
+                    if owner and repo:
+                        key = f"{owner}/{repo}"
+                        if key not in seen:
+                            seen.add(key)
+                            result.append(key)
+                else:
+                    pass
+        except Exception:
+            pass
+    return result
+
+
+def _get_github_repos_merged_tuples():
+    """返回合并后的 (owner, repo) 元组列表，供同步等使用。"""
+    return [tuple(s.split("/", 1)) for s in _get_github_repos_merged()]
+
 
 
 @app.get("/daily")
@@ -247,9 +308,15 @@ async def generate_user_daily_report(
 
 @app.get("/config/github-repos")
 async def list_github_repos():
-    """返回已配置的 GitHub 仓库列表（用于前端展示）。"""
-    repos = settings.get_github_repos()
-    return {"repos": [f"{o}/{r}" for o, r in repos]}
+    """返回已配置的 GitHub 仓库列表及每个仓库对应的 user_id（邮箱）。前端点击左侧项目时据此切换邮箱。"""
+    repos = _get_github_repos_merged()
+    user_map = _get_repo_user_id_map()
+    return {
+        "repos": [
+            {"repo": r, "user_id": user_map.get(r)}
+            for r in repos
+        ]
+    }
 
 
 @app.get("/api/download/generated/{filename}")
@@ -343,12 +410,14 @@ async def list_activities(
     user_id: str,
     date: str,
     end_date: Optional[str] = None,
+    repo: Optional[str] = None,
     db=Depends(get_db),
 ):
     """
     按用户和日期（或日期范围）查询原始活动列表。
     - date: 起始日期 YYYY-MM-DD
     - end_date: 可选，结束日期 YYYY-MM-DD，不传则只查 date 当天（日报）；传则查区间（周报）
+    - repo: 可选，仓库筛选，格式 owner/repo，不传则返回该用户所有仓库的活动
     """
     from datetime import datetime, timezone, timedelta
 
@@ -370,6 +439,8 @@ async def list_activities(
     from src.models.activity import ActivityQuery
 
     query = ActivityQuery(user_id=user_id, start_time=start, end_time=end)
+    if repo and repo.strip():
+        query.project_name = repo.strip()
     activities = activity_service.query_activities(db, query)
 
     return {
@@ -391,21 +462,20 @@ async def sync_github_activities(
     """
     Sync recent GitHub activities (commits + PRs) into the database.
 
-    - owner/repo 不填：同步配置中的所有仓库（GITHUB_REPOS 或 GITHUB_DEFAULT_OWNER/REPO）
+    - owner/repo 不填：同步配置中的所有仓库（.env + config/bot_config.yaml 合并列表）
     - owner/repo 指定：只同步该仓库
     - hours: 拉取最近多少小时的数据（默认 24）
     """
     from datetime import datetime, timezone, timedelta
 
-    settings = get_settings()
-    repos = settings.get_github_repos()
+    repos = _get_github_repos_merged_tuples()
 
     if owner and repo:
         repos = [(owner, repo)]
     elif not repos:
         raise HTTPException(
             status_code=400,
-            detail="GitHub 仓库未配置。请在 .env 中设置 GITHUB_REPOS 或 GITHUB_DEFAULT_OWNER/GITHUB_DEFAULT_REPO",
+            detail="GitHub 仓库未配置。请在 .env 中设置 GITHUB_REPOS 或 GITHUB_DEFAULT_OWNER/GITHUB_DEFAULT_REPO，或在 config/bot_config.yaml 的 github.repos 中添加仓库。",
         )
 
     from src.providers.github_provider import GitHubProvider

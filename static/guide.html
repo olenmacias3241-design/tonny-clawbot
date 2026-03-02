@@ -48,9 +48,32 @@
     .repo-bar input { flex: 1; min-width: 200px; padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 0.9rem; }
     .repo-bar button { padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--bg); cursor: pointer; font-size: 0.9rem; }
     .repo-bar button:hover { opacity: 0.9; }
+    .app-wrap { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 220px; flex-shrink: 0;
+      background: var(--surface); border-right: 1px solid var(--border);
+      padding: 1.25rem 0; overflow-y: auto;
+    }
+    .sidebar-title { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 0 1.25rem 0.75rem; }
+    .sidebar-item {
+      display: block; width: 100%; padding: 0.6rem 1.25rem; font-size: 0.9rem; color: var(--text);
+      background: none; border: none; border-left: 3px solid transparent; cursor: pointer;
+      text-align: left; font-family: inherit; transition: background 0.15s, border-color 0.15s;
+    }
+    .sidebar-item:hover { background: rgba(34,197,94,0.06); }
+    .sidebar-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(34,197,94,0.1); }
+    .main { flex: 1; overflow: auto; padding: 2rem 1.5rem; }
   </style>
 </head>
 <body>
+  <div class="app-wrap">
+    <aside class="sidebar">
+      <div class="sidebar-title">项目清单</div>
+      <div id="sidebarList">
+        <p style="padding:0 1.25rem;color:var(--text-muted);font-size:0.85rem">加载中...</p>
+      </div>
+    </aside>
+    <div class="main">
   <div class="container">
     <div class="top-bar">
       <h1>仓库文档与代码分析</h1>
@@ -68,6 +91,8 @@
     <div class="content-panel" id="mainContent">
       <p style="color:var(--text-muted)">加载中...</p>
     </div>
+  </div>
+  </div>
   </div>
   <script>
     const API_BASE = '';
@@ -108,6 +133,21 @@
     function apiUrl(path) {
       if (!currentRepo) return `${API_BASE}${path}`;
       return `${API_BASE}${path}?repo=${encodeURIComponent(currentRepo)}`;
+    }
+
+    function setRepoAndLoad(repo) {
+      currentRepo = (repo || '').trim();
+      repoInput.value = currentRepo;
+      const url = new URL(window.location.href);
+      if (currentRepo) url.searchParams.set('repo', currentRepo);
+      else url.searchParams.delete('repo');
+      window.history.replaceState({}, '', url.toString());
+      document.querySelectorAll('#sidebarList .sidebar-item').forEach(btn => {
+        btn.classList.toggle('active', (btn.dataset.repo || '') === currentRepo);
+      });
+      const activeTab = document.querySelector('.tab.active');
+      if (activeTab && activeTab.dataset.doc === 'code') loadCodeAnalysis();
+      else loadProjectGuide();
     }
 
     async function loadProjectGuide() {
@@ -202,6 +242,27 @@
       window.location.href = url.toString();
     });
 
+    fetch(`${API_BASE}/config/github-repos`).then(r=>r.json()).then(d=>{
+      const list = d.repos || [];
+      const repos = list.map(x => typeof x === 'string' ? x : (x.repo || ''));
+      const el = document.getElementById('sidebarList');
+      let html = '';
+      repos.forEach(repo => {
+        if (!repo) return;
+        html += `<button type="button" class="sidebar-item" data-repo="${escapeHtml(repo)}">${escapeHtml(repo)}</button>`;
+      });
+      if (!html) html = '<p style="padding:0 1.25rem;color:var(--text-muted);font-size:0.85rem">未配置仓库</p>';
+      el.innerHTML = html;
+      el.querySelectorAll('.sidebar-item').forEach(btn => {
+        btn.addEventListener('click', () => setRepoAndLoad(btn.dataset.repo || ''));
+      });
+      document.querySelectorAll('#sidebarList .sidebar-item').forEach(btn => {
+        btn.classList.toggle('active', (btn.dataset.repo || '') === currentRepo);
+      });
+    }).catch(() => {
+      document.getElementById('sidebarList').innerHTML = '<p style="padding:0 1.25rem;color:var(--text-muted);font-size:0.85rem">加载失败</p>';
+    });
+
     (async function init() {
       await setRepoFromUrl();
       document.querySelectorAll('.tab').forEach(t => {
@@ -213,6 +274,11 @@
         });
       });
       loadProjectGuide();
+      setTimeout(() => {
+        document.querySelectorAll('#sidebarList .sidebar-item').forEach(btn => {
+          btn.classList.toggle('active', (btn.dataset.repo || '') === currentRepo);
+        });
+      }, 300);
     })();
   </script>
 </body>

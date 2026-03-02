@@ -26,3 +26,17 @@ rate_limiting:
   enabled: false
   requests_per_minute: 60
   requests_per_hour: 1000
+
+# 龙虾仓库（日报/周报数据源）
+# 每个仓库可配置 user_id（Git 提交邮箱），点击左侧项目时自动切换对应用户邮箱
+github:
+  display_name: 龙虾
+  repos:
+    - owner: shanglily01-lab
+      repo: shanglily01-lab
+      user_id: shanglily01@gmail.com
+      description: shanglily01-lab 仓库
+    - owner: olenmacias3241-design
+      repo: tonny-clawbot
+      user_id: olenmacias3241@gmail.com
+      description: 龙虾 Claw Bot 主仓库，用于日报/周报同步
