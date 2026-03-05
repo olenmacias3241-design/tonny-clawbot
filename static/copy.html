@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>批量生产文案 · Claw Bot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #18181c;
+      --border: #2a2a32;
+      --text: #e4e4e7;
+      --text-muted: #8b8b95;
+      --accent: #22c55e;
+      --accent-dim: #16a34a;
+      --danger: #ef4444;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Noto Sans SC', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.6; }
+    .container { max-width: 720px; margin: 0 auto; padding: 2rem 1.5rem; }
+    .top-strip { display: flex; align-items: center; gap: 1.5rem; padding: 0.75rem 1.5rem; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 0.9rem; flex-shrink: 0; }
+    .top-strip a { color: var(--text-muted); text-decoration: none; }
+    .top-strip a:hover { color: var(--accent); }
+    .top-strip a.active { color: var(--accent); font-weight: 500; }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.5rem; }
+    h1::before { content: ''; width: 4px; height: 1.2em; background: var(--accent); border-radius: 2px; }
+    .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1.25rem; }
+    .field { margin-bottom: 1rem; }
+    .field label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem; }
+    .field textarea, .field select { width: 100%; padding: 0.6rem 0.75rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit; }
+    .field textarea { min-height: 100px; resize: vertical; }
+    .field textarea:focus, .field select:focus { outline: none; border-color: var(--accent); }
+    .field .hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem; }
+    .btn { font-family: inherit; font-size: 0.9rem; font-weight: 500; padding: 0.5rem 1rem; border-radius: 6px; border: none; cursor: pointer; }
+    .btn-primary { background: var(--accent); color: #0a0a0c; }
+    .btn-primary:hover { background: var(--accent-dim); }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn-secondary { background: var(--border); color: var(--text); font-size: 0.8rem; padding: 0.35rem 0.6rem; }
+    .btn-secondary:hover { background: #3a3a44; }
+    .status { font-size: 0.85rem; margin-top: 0.5rem; }
+    .status.loading { color: var(--accent); }
+    .status.error { color: var(--danger); }
+    .result-card { padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.75rem; background: var(--surface); }
+    .result-card .item { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem; }
+    .result-card .text { white-space: pre-wrap; word-break: break-word; margin-bottom: 0.5rem; }
+    .result-card .error { color: var(--danger); font-size: 0.85rem; }
+    .result-card .copy-btn { margin-top: 0.5rem; }
+    .results-actions { margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .field code { background: var(--border); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.85em; }
+    .poster-btn { margin-left: 0.5rem; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
+    .modal-overlay.hidden { display: none; }
+    .modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); max-width: 90vw; max-height: 90vh; overflow: auto; padding: 1rem; }
+    .modal-box img { max-width: 100%; height: auto; display: block; border-radius: 6px; }
+    .modal-box .modal-actions { margin-top: 1rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <header class="top-strip">
+    <a href="/chat">Claw Bot</a>
+    <a href="/daily">日报周报</a>
+    <a href="/guide">仓库文档</a>
+    <a href="/config">配置</a>
+    <a href="/copy" class="active">批量文案</a>
+  </header>
+  <div class="container">
+    <h1>批量生产文案</h1>
+    <p class="subtitle">先填参考内容（如与龙虾的聊天摘要、产品说明），再填条目与提示词，生成的文案会基于这些内容</p>
+
+    <div class="panel">
+      <div class="field">
+        <label>参考内容（聊天摘要、产品说明、活动要点等）</label>
+        <textarea id="contextInput" placeholder="可粘贴与龙虾的对话内容、产品介绍、卖点、活动规则等&#10;生成的每条文案都会结合这些内容，避免空泛"></textarea>
+        <p class="hint">提示词中可用 {context} 引用此处内容；建议先到「Claw Bot」聊天里整理好要点再粘贴过来</p>
+      </div>
+      <div class="field">
+        <label>批量条目（每行一条）</label>
+        <textarea id="itemsInput" placeholder="产品A&#10;产品B&#10;活动主题：春季促销"></textarea>
+        <p class="hint">每行一个主题/产品/关键词，最多 50 条</p>
+      </div>
+      <div class="field">
+        <label>提示词（给 AI 的写作要求，必须包含占位符 {item}）</label>
+        <textarea id="promptInput">【参考内容】
+{context}
+
+请根据以上内容，为「{item}」写一段有具体信息的文案（需体现参考内容中的要点，不要泛泛而谈）。</textarea>
+        <p class="hint">占位符必须为<strong>英文半角</strong>：<code>{item}</code> 表示当前条目，<code>{context}</code> 表示参考内容。不要用中文括号「」或全角｛｝。</p>
+        <button type="button" class="btn btn-secondary" id="btnResetPrompt" style="margin-top:0.35rem">恢复默认提示词</button>
+        <button type="button" class="btn btn-secondary" id="btnLoadTemplate" style="margin-top:0.35rem; margin-left:0.35rem">加载范本</button>
+      </div>
+      <div class="field">
+        <label>模型（可选）</label>
+        <select id="modelSelect">
+          <option value="">服务器默认</option>
+          <option value="gpt-4o-mini">gpt-4o-mini</option>
+          <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+          <option value="gpt-4o">gpt-4o</option>
+          <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>文案风格 / 元素（可选）</label>
+        <select id="styleSelect">
+          <option value="">无（默认）</option>
+          <option value="anime">日本动漫</option>
+          <option value="acg">二次元 / ACG</option>
+          <option value="shounen">热血中二</option>
+          <option value="healing">治愈系</option>
+          <option value="cyberpunk">赛博朋克</option>
+          <option value="gufeng">古风 / 国风</option>
+          <option value="sci-fi">科幻</option>
+        </select>
+        <p class="hint">为每条文案加入对应风格元素，如日漫感、赛博感、古风等，使内容更有辨识度</p>
+      </div>
+      <button type="button" class="btn btn-primary" id="btnGenerate">生成文案</button>
+      <p class="status" id="status"></p>
+    </div>
+
+    <div id="resultsWrap" style="display:none">
+      <div class="results-actions">
+        <button type="button" class="btn btn-secondary" id="btnCopyAll">一键复制全部</button>
+        <button type="button" class="btn btn-secondary" id="btnExportTxt">导出为 TXT</button>
+      </div>
+      <div id="resultsList"></div>
+    </div>
+
+    <div id="posterModal" class="modal-overlay hidden" aria-hidden="true">
+      <div class="modal-box">
+        <p style="margin-bottom:0.5rem;color:var(--text-muted);font-size:0.9rem">文案海报</p>
+        <img id="posterImage" src="" alt="生成的海报" />
+        <div class="modal-actions">
+          <a id="posterDownload" href="" download="" class="btn btn-primary">下载海报</a>
+          <button type="button" class="btn btn-secondary" id="posterModalClose">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '';
+    const contextInput = document.getElementById('contextInput');
+    const itemsInput = document.getElementById('itemsInput');
+    const promptInput = document.getElementById('promptInput');
+    const modelSelect = document.getElementById('modelSelect');
+    const btnGenerate = document.getElementById('btnGenerate');
+    const statusEl = document.getElementById('status');
+    const resultsWrap = document.getElementById('resultsWrap');
+    const resultsList = document.getElementById('resultsList');
+    const btnCopyAll = document.getElementById('btnCopyAll');
+    const btnExportTxt = document.getElementById('btnExportTxt');
+
+    let lastResults = [];
+
+    function setStatus(msg, type) {
+      statusEl.textContent = msg;
+      statusEl.className = 'status ' + (type || '');
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s || '';
+      return div.innerHTML;
+    }
+
+    async function generate() {
+      const raw = (itemsInput.value || '').trim();
+      const items = raw.split(/\n/).map(s => s.trim()).filter(Boolean).slice(0, 50);
+      const prompt_template = (promptInput.value || '').trim();
+      if (!items.length) {
+        setStatus('请至少输入一条条目', 'error');
+        return;
+      }
+      if (!prompt_template) {
+        setStatus('请填写提示词', 'error');
+        return;
+      }
+      if (!prompt_template.includes('{item}')) {
+        setStatus('提示词中必须包含英文半角占位符 {item}（不能是中文括号或全角符号）', 'error');
+        return;
+      }
+      const context = (contextInput.value || '').trim();
+      btnGenerate.disabled = true;
+      setStatus(`正在生成 ${items.length} 条…`, 'loading');
+      try {
+        const res = await fetch(API_BASE + '/api/batch-copy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items,
+            prompt_template,
+            context: context || undefined,
+            model: (modelSelect.value || '').trim() || undefined,
+            style: (document.getElementById('styleSelect').value || '').trim() || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        lastResults = data.results || [];
+        let html = '';
+        lastResults.forEach((r, i) => {
+          const err = r.error ? `<div class="error">${escapeHtml(r.error)}</div>` : '';
+          const text = r.text != null ? `<div class="text">${escapeHtml(r.text)}</div>` : '';
+          const copyBtn = r.text ? `<button type="button" class="btn btn-secondary copy-btn" data-i="${i}">复制</button>` : '';
+          const posterBtn = r.text ? `<button type="button" class="btn btn-secondary poster-btn" data-i="${i}">生成海报</button>` : '';
+          html += `<div class="result-card" data-i="${i}"><div class="item">${escapeHtml(r.item)}</div>${text}${err}${copyBtn}${posterBtn}</div>`;
+        });
+        resultsList.innerHTML = html;
+        resultsWrap.style.display = 'block';
+        resultsList.querySelectorAll('.copy-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const i = parseInt(btn.dataset.i, 10);
+            const t = lastResults[i] && lastResults[i].text;
+            if (t) {
+              navigator.clipboard.writeText(t).then(() => setStatus('已复制', '')).catch(() => setStatus('复制失败', 'error'));
+            }
+          });
+        });
+        resultsList.querySelectorAll('.poster-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const i = parseInt(btn.dataset.i, 10);
+            const r = lastResults[i];
+            if (!r || !r.text) return;
+            const style = (document.getElementById('styleSelect').value || '').trim() || undefined;
+            btn.disabled = true;
+            setStatus('正在生成海报…', 'loading');
+            try {
+              const res = await fetch(API_BASE + '/api/generate-poster', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: r.text, style }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.detail || res.statusText);
+              const url = API_BASE + data.download_url;
+              document.getElementById('posterImage').src = url + '?t=' + Date.now();
+              document.getElementById('posterDownload').href = url;
+              document.getElementById('posterDownload').download = data.filename || 'poster.png';
+              document.getElementById('posterModal').classList.remove('hidden');
+              document.getElementById('posterModal').setAttribute('aria-hidden', 'false');
+              setStatus('海报已生成，可下载');
+            } catch (e) {
+              setStatus('生成海报失败: ' + (e.message || e), 'error');
+            }
+            btn.disabled = false;
+          });
+        });
+        const ok = lastResults.filter(r => r.text).length;
+        setStatus(`已生成 ${ok}/${lastResults.length} 条`);
+      } catch (e) {
+        setStatus('生成失败: ' + (e.message || e), 'error');
+      }
+      btnGenerate.disabled = false;
+    }
+
+    function copyAll() {
+      const lines = lastResults.map(r => r.text ? `${r.item}\t${r.text}` : `${r.item}\t[失败] ${r.error || ''}`).join('\n');
+      if (!lines) return;
+      navigator.clipboard.writeText(lines).then(() => setStatus('已复制全部（条目\t文案）', '')).catch(() => setStatus('复制失败', 'error'));
+    }
+
+    function exportTxt() {
+      const lines = lastResults.map(r => r.text ? `${r.item}\n${r.text}` : `${r.item}\n[失败] ${r.error || ''}`).join('\n\n');
+      if (!lines) return;
+      const blob = new Blob([lines], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'batch_copy_' + new Date().toISOString().slice(0, 10) + '.txt';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus('已导出 TXT', '');
+    }
+
+    btnGenerate.addEventListener('click', generate);
+    btnCopyAll.addEventListener('click', copyAll);
+    btnExportTxt.addEventListener('click', exportTxt);
+    document.getElementById('posterModalClose').addEventListener('click', () => {
+      document.getElementById('posterModal').classList.add('hidden');
+      document.getElementById('posterModal').setAttribute('aria-hidden', 'true');
+    });
+    document.getElementById('posterModal').addEventListener('click', (e) => {
+      if (e.target.id === 'posterModal') {
+        document.getElementById('posterModal').classList.add('hidden');
+        document.getElementById('posterModal').setAttribute('aria-hidden', 'true');
+      }
+    });
+    document.getElementById('btnResetPrompt').addEventListener('click', function() {
+      promptInput.value = '【参考内容】\n{context}\n\n请根据以上内容，为「{item}」写一段有具体信息的文案（需体现参考内容中的要点，不要泛泛而谈）。';
+      setStatus('已恢复默认提示词', '');
+    });
+    document.getElementById('btnLoadTemplate').addEventListener('click', function() {
+      contextInput.value = '【产品/活动说明】\n春季上新：主打三款限定周边，面向年轻用户与二次元爱好者。\n\n卖点：\n- 限定款设计，数量有限\n- 满 99 包邮，可叠加优惠券\n- 活动时间：3 月 1 日 — 3 月 31 日\n\n传播重点：强调「限定」「不容错过」「一起冲」等氛围，可适当带一点日漫/ACG 感。';
+      itemsInput.value = '限定款 T 恤 · 樱花主题\n限定款徽章套装 · 人气角色\n限定款抱枕 · 治愈系';
+      promptInput.value = '【参考内容】\n{context}\n\n请根据以上内容，为「{item}」写一段有具体信息的文案（需体现参考内容中的要点，不要泛泛而谈）。';
+      document.getElementById('styleSelect').value = 'anime';
+      setStatus('已加载范本（日本动漫风格），可直接点「生成文案」试用', '');
+    });
+  </script>
+</body>
+</html>

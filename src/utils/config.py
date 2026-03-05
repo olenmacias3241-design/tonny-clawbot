@@ -1,12 +1,14 @@
 """Configuration management for Claw Bot AI."""
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, List, Tuple
 from functools import lru_cache
 
 
 class Settings(BaseSettings):
     """Application settings."""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Application
     app_name: str = "Claw Bot AI"
@@ -72,6 +74,9 @@ class Settings(BaseSettings):
     # 允许的命令（逗号分隔），例如: ls,pwd,date,whoami,open
     allowed_commands: str = "ls,pwd,date,whoami"
 
+    # SadTalker 口播：用于运行 SadTalker 的 Python 可执行路径（可选）
+    sadtalker_python: Optional[str] = None
+
     def get_github_repos(self) -> List[Tuple[str, str]]:
         """返回要同步的 (owner, repo) 列表。"""
         if self.github_repos:
@@ -86,10 +91,6 @@ class Settings(BaseSettings):
         if self.github_default_owner and self.github_default_repo:
             return [(self.github_default_owner, self.github_default_repo)]
         return []
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 @lru_cache()

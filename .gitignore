@@ -63,3 +63,8 @@ htmlcov/
 data/temp/
 data/generated/
 repos_cache/
+
+# SadTalker 本地环境与模型（不推送）
+SadTalker/venv/
+SadTalker/checkpoints/
+SadTalker/gfpgan/

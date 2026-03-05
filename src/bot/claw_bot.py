@@ -152,6 +152,8 @@ class ClawBot:
             _word_keywords = (
                 "做word", "做 word", "生成word", "生成 word", "写word", "写 word",
                 "word文档", "生成word文档", "做个word", "写一份word", "帮我做word", "生成一份word",
+                "写到word", "写到 word", "做到word里", "把上面的内容写到word", "把聊天内容整理成word",
+                "如上的内容写到word", "以上的内容写到word",
             )
             is_word = any(k in msg_raw for k in _word_keywords) and len(msg_raw) < 800
             # 关键词未命中时，根据当前语境用 AI 判断是否要做 PPT/文档/Word/表格（避免枚举不全）
@@ -279,7 +281,14 @@ class ClawBot:
                     ctx = self._build_conversation_context(conversation.messages[:-1])
                     if not (ctx and ctx.strip()) and msg_raw:
                         ctx = f"用户（本次需求与资料）：\n{msg_raw}"
-                    name = await generate_docx_and_save(msg_raw.strip(), conversation_context=ctx)
+                    prompt = msg_raw.strip()
+                    # 用户说「把上面的/如上的/对话内容 写到/做到 Word 里」且确有对话时，以对话内容为主生成文档
+                    if ctx and ctx.strip() and any(k in msg_raw for k in (
+                        "上面的内容", "这些内容", "刚才说的", "对话内容", "上面说的", "如上的内容", "以上内容", "聊天内容",
+                    )):
+                        if any(k in msg_raw for k in ("加入", "做到", "写成", "写到", "加入到", "添加", "整理成", "导出")):
+                            prompt = "根据当前对话内容生成一份完整 Word 文档，请按对话中的要点与信息整理成章节，内容要具体、可直接使用。"
+                    name = await generate_docx_and_save(prompt, conversation_context=ctx)
                     base = "/api/download/generated"
                     reply = f"Word 文档已生成。\n\n[下载 Word]({base}/{name})"
                     conversation.add_message(role="assistant", content=reply)
@@ -321,7 +330,13 @@ class ClawBot:
                     ctx = self._build_conversation_context(conversation.messages[:-1])
                     if not (ctx and ctx.strip()) and msg_raw:
                         ctx = f"用户（本次需求与资料）：\n{msg_raw}"
-                    name = await generate_document_and_save(msg_raw.strip(), conversation_context=ctx)
+                    prompt = msg_raw.strip()
+                    if ctx and ctx.strip() and any(k in msg_raw for k in (
+                        "上面的内容", "这些内容", "刚才说的", "对话内容", "如上的内容", "以上内容", "聊天内容",
+                    )):
+                        if any(k in msg_raw for k in ("加入", "做到", "写成", "写到", "加入到", "添加", "整理成", "导出")):
+                            prompt = "根据当前对话内容生成一份完整文档，请按对话中的要点与信息整理成章节，内容要具体、可直接使用。"
+                    name = await generate_document_and_save(prompt, conversation_context=ctx)
                     base = "/api/download/generated"
                     reply = f"文档已生成。\n\n[下载 Markdown]({base}/{name})"
                     conversation.add_message(role="assistant", content=reply)

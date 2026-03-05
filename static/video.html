@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>根据聊天内容生成视频 · Claw Bot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #18181c;
+      --border: #2a2a32;
+      --text: #e4e4e7;
+      --text-muted: #8b8b95;
+      --accent: #22c55e;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Noto Sans SC', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+    header { display: flex; align-items: center; gap: 1.5rem; padding: 0.75rem 1.5rem; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+    header a { color: var(--text-muted); text-decoration: none; }
+    header a:hover { color: var(--accent); }
+    header a.active { color: var(--accent); font-weight: 600; }
+    .main { flex: 1; max-width: 720px; margin: 0 auto; padding: 1.5rem; width: 100%; }
+    h1 { font-size: 1.35rem; margin-bottom: 0.5rem; }
+    .hint { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem; }
+    .hint code { background: var(--surface); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.85em; }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label { display: block; color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.35rem; }
+    .form-group select,
+    .form-group input,
+    .form-group textarea {
+      width: 100%; padding: 0.6rem 0.75rem; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text); font-family: inherit; font-size: 0.95rem;
+    }
+    .form-group textarea { min-height: 140px; resize: vertical; }
+    .form-group input:focus,
+    .form-group textarea:focus { outline: none; border-color: var(--accent); }
+    #generateBtn { padding: 0.75rem 1.5rem; border-radius: 8px; border: none; background: var(--accent); color: var(--bg); font-weight: 500; cursor: pointer; font-size: 1rem; }
+    #generateBtn:hover { opacity: 0.9; }
+    #generateBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .result { margin-top: 1.5rem; padding: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+    .result h3 { font-size: 1rem; margin-bottom: 0.5rem; }
+    .result pre { white-space: pre-wrap; word-break: break-word; font-size: 0.9rem; line-height: 1.5; max-height: 200px; overflow-y: auto; }
+    .result .links { margin-top: 0.75rem; }
+    .result .links a { color: var(--accent); margin-right: 1rem; }
+    .error { color: #ef4444; margin-top: 1rem; }
+    .shots-list { margin-top: 0.5rem; font-size: 0.85rem; }
+    .shots-list li { margin-bottom: 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/chat">对话</a>
+    <a href="/video" class="active">生成视频</a>
+    <a href="/daily">日报周报</a>
+    <a href="/guide">仓库文档</a>
+    <a href="/config">配置</a>
+  </header>
+  <div class="main">
+    <h1>根据聊天内容生成视频</h1>
+    <p class="hint">选择已有对话，或直接粘贴对话内容，生成视频脚本与分镜；勾选「同时生成视频」可得到可播放的 .mp4 文件。若仅生成配音 MP3，请安装 ffmpeg（macOS: <code>brew install ffmpeg</code>）后重试。</p>
+    <p class="hint" style="margin-top:0.25rem">若视频无字幕，请在播放器中选择「字幕」→「轨道 1」或开启内嵌字幕；<strong>人物动嘴</strong>需本机安装 SadTalker（<code>data/templates/README.md</code> 有安装步骤）。</p>
+
+    <div class="form-group">
+      <label>选择已有对话（可选）</label>
+      <select id="conversationId">
+        <option value="">— 不选，使用下方粘贴内容 —</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>或直接粘贴对话内容（用户：… 助手：…）</label>
+      <textarea id="content" placeholder="用户：帮我写一个 AI 运营方案&#10;助手：好的，可以从以下几块…"></textarea>
+    </div>
+    <div class="form-group">
+      <label>补充要求（可选）</label>
+      <input type="text" id="userPrompt" placeholder="例如：风格偏口播、时长约 1 分钟" />
+    </div>
+    <div class="form-group" style="display:flex;align-items:center;gap:0.5rem">
+      <input type="checkbox" id="generateFile" checked />
+      <label for="generateFile" style="margin:0">同时生成视频文件 (.mp4)</label>
+    </div>
+    <button type="button" id="generateBtn">根据聊天内容生成视频</button>
+
+    <div id="outcome"></div>
+  </div>
+  <script>
+    const API_BASE = '';
+    const convEl = document.getElementById('conversationId');
+    const contentEl = document.getElementById('content');
+    const userPromptEl = document.getElementById('userPrompt');
+    const generateBtn = document.getElementById('generateBtn');
+    const outcomeEl = document.getElementById('outcome');
+
+    // 从 URL 读取 conversation_id（对话页可带参数跳转）
+    (function () {
+      const params = new URLSearchParams(location.search);
+      const cid = params.get('conversation_id');
+      if (cid) {
+        contentEl.placeholder = '已从链接带入对话 ID，可直接点击生成；或在此粘贴内容覆盖。';
+        convEl.innerHTML = '<option value="">— 使用链接中的对话 ID —</option>';
+        convEl.dataset.urlCid = cid;
+      }
+    })();
+
+    async function loadConversations() {
+      try {
+        const ids = await fetch(API_BASE + '/conversations').then(r => r.json());
+        const urlCid = convEl.dataset.urlCid;
+        if (urlCid && ids.includes(urlCid)) {
+          convEl.innerHTML = '<option value="' + urlCid + '">当前对话（来自链接）</option>';
+          convEl.value = urlCid;
+        } else if (ids.length) {
+          ids.forEach(id => {
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.textContent = id.slice(0, 8) + '…';
+            convEl.appendChild(opt);
+          });
+        }
+      } catch (_) {}
+    }
+    loadConversations();
+
+    generateBtn.addEventListener('click', async function () {
+      const conversationId = (convEl.dataset.urlCid || convEl.value || '').trim();
+      const content = (contentEl.value || '').trim();
+      const userPrompt = (userPromptEl.value || '').trim();
+      if (!conversationId && !content) {
+        outcomeEl.innerHTML = '<p class="error">请选择一条对话或粘贴对话内容。</p>';
+        return;
+      }
+      generateBtn.disabled = true;
+        const genFile = document.getElementById('generateFile').checked;
+        outcomeEl.innerHTML = '<p class="hint">正在生成视频脚本与视频文件…</p>' +
+          (genFile ? '<p class="hint" style="margin-top:0.25rem">若启用了口播（人物动嘴），约需 5～10 分钟，请耐心等待。</p>' : '');
+      try {
+        const body = { user_prompt: userPrompt };
+        if (conversationId) body.conversation_id = conversationId;
+        if (content) body.content = content;
+        body.generate_file = document.getElementById('generateFile').checked;
+        const res = await fetch(API_BASE + '/api/generate-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          outcomeEl.innerHTML = '<p class="error">' + (data.detail || data.message || '请求失败') + '</p>';
+          return;
+        }
+        let html = '<div class="result"><h3>旁白稿</h3><pre>' + escapeHtml(data.script || '') + '</pre>';
+        html += '<div class="links"><a href="' + (data.download_script || '') + '" target="_blank" rel="noopener">下载脚本 (.txt)</a>';
+        html += ' <a href="' + (data.download_json || '') + '" target="_blank" rel="noopener">下载分镜 (.json)</a>';
+        if (data.download_video) {
+          html += ' <a href="' + data.download_video + '" target="_blank" rel="noopener" style="font-weight:600">下载视频 (.mp4)</a>';
+          if (data.video_sadtalker_used) {
+            html += '<span class="hint" style="display:block;margin-top:0.25rem">已使用 SadTalker 口播（人物动嘴）。播放时在播放器中选择「字幕」→ 轨道 1 可显示字幕。</span>';
+          } else {
+            html += '<span class="hint" style="display:block;margin-top:0.25rem">播放时在播放器中选择「字幕」→ 轨道 1 可显示字幕；要人物动嘴请安装并配置 SadTalker（见 data/templates/README.md）。</span>';
+          }
+        }
+        if (data.video_note) {
+          html += '<p class="hint" style="margin-top:0.5rem">' + escapeHtml(data.video_note) + '</p>';
+        }
+        if (data.download_audio) {
+          html += ' <a href="' + data.download_audio + '" target="_blank" rel="noopener">下载配音 (.mp3)</a>';
+        }
+        html += '</div>';
+        if (data.video_error) {
+          html += '<p class="error" style="margin-top:0.5rem">' + escapeHtml(data.video_error) + '</p>';
+        }
+        if (data.shots && data.shots.length) {
+          html += '<h3 style="margin-top:1rem">分镜</h3><ol class="shots-list">';
+          data.shots.forEach(s => {
+            const t = typeof s === 'object' ? (s.visual || s.narration || JSON.stringify(s)) : s;
+            html += '<li>' + escapeHtml(t) + '</li>';
+          });
+          html += '</ol>';
+        }
+        html += '</div>';
+        outcomeEl.innerHTML = html;
+      } catch (e) {
+        outcomeEl.innerHTML = '<p class="error">网络错误：' + (e.message || '请稍后重试') + '</p>';
+      }
+      generateBtn.disabled = false;
+    });
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s == null ? '' : s;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>

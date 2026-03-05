@@ -249,6 +249,17 @@ async def config_page():
     raise HTTPException(status_code=404, detail="Config page not found")
 
 
+@app.get("/copy")
+@app.get("/copy/")
+async def batch_copy_page():
+    """批量生产文案页。"""
+    from fastapi.responses import FileResponse
+    html_path = os.path.join(_static_dir, "copy.html")
+    if os.path.isfile(html_path):
+        return FileResponse(html_path)
+    raise HTTPException(status_code=404, detail="Batch copy page not found")
+
+
 bot = ClawBot()
 email_sender = EmailSender()
 telegram_sender = TelegramSender()
@@ -266,9 +277,11 @@ async def root():
         "status": "running",
         "links": {
             "chat": "/chat",
+            "video": "/video",
             "daily": "/daily",
             "guide": "/guide",
             "config": "/config",
+            "copy": "/copy",
             "api_docs": "/docs",
             "generate_table": "/api/generate-table",
             "generate_ppt": "/api/generate-ppt",
@@ -344,6 +357,157 @@ async def api_generate_ppt(request: GeneratePptRequest):
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}.pptx"'},
     )
+
+
+@app.get("/video")
+async def video_page():
+    """根据聊天内容生成视频脚本的页面。"""
+    from fastapi.responses import FileResponse
+    html_path = os.path.join(_static_dir, "video.html")
+    if os.path.isfile(html_path):
+        return FileResponse(html_path)
+    raise HTTPException(status_code=404, detail="Video page not found")
+
+
+@app.post("/api/generate-video")
+async def api_generate_video(body: dict):
+    """
+    根据对话内容生成视频脚本与分镜。
+    Body: { "conversation_id": "可选", "content": "可选", "generate_file": true 表示同时生成 .mp4 视频 }
+    返回 script, shots, 下载链接；若 generate_file 且成功则含 video_filename, download_video。
+    """
+    from src.services.content_generator import generate_video_script, generate_video_file_from_script, _generated_dir
+    conversation_id = (body.get("conversation_id") or "").strip()
+    content = (body.get("content") or "").strip()
+    user_prompt = (body.get("user_prompt") or "").strip()
+    if not conversation_id and not content:
+        raise HTTPException(status_code=400, detail="请提供 conversation_id（对话页当前会话）或 content（粘贴的对话内容）")
+    if conversation_id:
+        conv = bot.get_conversation(conversation_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="未找到该对话，请先在对话页发起会话后再试")
+        lines = []
+        for m in conv.messages:
+            if getattr(m, "role", None) == "system":
+                continue
+            label = "用户" if getattr(m, "role", None) == "user" else "助手"
+            lines.append(f"{label}：{(getattr(m, 'content', None) or '').strip()}")
+        conversation_context = "\n".join(lines[-30:])  # 最近 30 条
+    else:
+        conversation_context = content
+    try:
+        result = await generate_video_script(conversation_context, user_prompt=user_prompt)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    base_url = "/api/download/generated"
+    out = {
+        "script": result["script"],
+        "shots": result["shots"],
+        "script_filename": result["script_filename"],
+        "json_filename": result["json_filename"],
+        "download_script": f"{base_url}/{result['script_filename']}",
+        "download_json": f"{base_url}/{result['json_filename']}",
+    }
+    if body.get("generate_file"):
+        video_result = await generate_video_file_from_script(result["script"])
+        if video_result.get("video_filename"):
+            out["video_filename"] = video_result["video_filename"]
+            out["download_video"] = f"{base_url}/{video_result['video_filename']}"
+        if video_result.get("audio_filename"):
+            out["audio_filename"] = video_result["audio_filename"]
+            out["download_audio"] = f"{base_url}/{video_result['audio_filename']}"
+        if video_result.get("error"):
+            out["video_error"] = video_result["error"]
+        if video_result.get("video_note"):
+            out["video_note"] = video_result["video_note"]
+        if video_result.get("video_sadtalker_used") is not None:
+            out["video_sadtalker_used"] = video_result["video_sadtalker_used"]
+    return out
+
+
+# 批量文案可选风格：返回对应 system 说明，空表示不注入
+def _batch_copy_style_instructions(style: Optional[str]) -> Optional[str]:
+    if not style:
+        return None
+    styles = {
+        "anime": "你是一位擅长日本动漫风格的文案写手。文案需带有日式动漫感：可适当使用热血、羁绊、觉悟、命运等词汇，语气可中二或燃系，可带一点日式台词感（如「哦哦——」「这就是……！」），但不要过度夸张，保持可读性与信息完整。",
+        "cyberpunk": "你是一位赛博朋克风格的文案写手。文案需带有科幻、霓虹、黑客、反乌托邦元素：可运用霓虹、代码、义体、矩阵、霓虹都市等意象，语气冷峻或略带叛逆，用词偏科技感与未来感。",
+        "gufeng": "你是一位古风/国风文案写手。文案需带有古典韵味：可适当使用文言或半文半白、诗词意象、江湖、山河、笔墨等元素，用词雅致、节奏舒缓，避免网络梗和现代大白话。",
+        "sci-fi": "你是一位科幻风格的文案写手。文案需带有硬科幻或太空/未来感：可运用星际、文明、探索、科技、时间等意象，语气理性或宏大，保持专业感与想象力。",
+        "healing": "你是一位治愈系文案写手。文案需温暖、舒缓、治愈：用词柔和，可带一点日式治愈或自然、日常小确幸的感觉，避免激烈或负面情绪。",
+        "shounen": "你是一位热血中二/少年向文案写手。文案需燃、有斗志、带一点中二感：可运用信念、伙伴、超越、极限、必杀等词汇，语气昂扬，适合活动或产品宣传的冲击力。",
+        "acg": "你是一位二次元/ACG 风格文案写手。文案需带有 ACG 文化气息：可融合动漫、游戏、轻小说式的表达，用词可活泼、有梗、带一点角色感或剧情感，适合年轻向、宅向受众。",
+    }
+    key = (style or "").strip().lower().replace(" ", "").replace("日本动漫", "anime").replace("赛博朋克", "cyberpunk").replace("古风", "gufeng").replace("科幻", "sci-fi").replace("治愈系", "healing").replace("热血中二", "shounen").replace("二次元", "acg")
+    return styles.get(key)
+
+
+@app.post("/api/batch-copy")
+async def api_batch_copy(body: dict):
+    """
+    批量生产文案：对每个条目用同一提示词调用 AI 生成文案，可带入参考内容（如聊天摘要）使文案有实质内容。
+    Body: { "items": [...], "prompt_template": "...", "context": "可选", "model": "可选", "style": "可选，文案风格/元素" }
+    提示词中可用 {item} 表示当前条目，{context} 表示参考内容。
+    style 可选值：无/默认、日本动漫、赛博朋克、古风、科幻、治愈系、热血中二、二次元等。
+    """
+    items = body.get("items")
+    prompt_template = (body.get("prompt_template") or "").strip()
+    context = (body.get("context") or "").strip()
+    style = (body.get("style") or "").strip() or None
+    if not isinstance(items, list) or not items:
+        raise HTTPException(status_code=400, detail="请提供 items 数组（每项为一条待生成文案的条目）")
+    if not prompt_template:
+        raise HTTPException(status_code=400, detail="请提供 prompt_template（提示词，可用 {item}、{context}）")
+    items = [str(x).strip() for x in items if x][:50]
+    if not items:
+        raise HTTPException(status_code=400, detail="items 不能为空")
+    model = (body.get("model") or "").strip() or None
+
+    # 文案风格/元素：注入到 system 或 user 中，让 AI 带出对应风格
+    style_instructions = _batch_copy_style_instructions(style)
+
+    results = []
+    for i, item in enumerate(items):
+        try:
+            prompt = prompt_template.replace("{context}", context or "（未提供）").replace("{{context}}", context or "（未提供）")
+            prompt = prompt.replace("{item}", item).replace("{{item}}", item)
+            if style_instructions:
+                msg = [
+                    {"role": "system", "content": style_instructions},
+                    {"role": "user", "content": prompt},
+                ]
+            else:
+                msg = [{"role": "user", "content": prompt}]
+            text = await bot.ai_provider.generate_response(msg, model=model, temperature=0.7, max_tokens=1000)
+            results.append({"item": item, "text": (text or "").strip(), "error": None})
+        except Exception as e:
+            results.append({"item": item, "text": None, "error": str(e)})
+    return {"results": results}
+
+
+@app.post("/api/generate-poster")
+async def api_generate_poster(body: dict):
+    """
+    根据文案生成一张海报图片（PNG）。可选 style 与批量文案风格一致（anime/cyberpunk 等）。
+    Body: { "text": "文案内容", "style": "可选" }
+    返回: { "filename": "poster_xxx.png", "download_url": "/api/download/generated/poster_xxx.png" }
+    """
+    text = (body.get("text") or "").strip()
+    style = (body.get("style") or "").strip() or None
+    if not text:
+        raise HTTPException(status_code=400, detail="请提供 text（文案内容）")
+    try:
+        from src.services.poster_generator import generate_poster
+        filename, _ = await generate_poster(copy_text=text, style=style)
+        base_url = "/api/download/generated"
+        return {
+            "filename": filename,
+            "download_url": f"{base_url}/{filename}",
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/reports/user/daily")
@@ -512,7 +676,7 @@ async def download_generated(filename: str):
     from fastapi.responses import FileResponse
     from src.services.content_generator import _generated_dir
 
-    if not re.match(r"^(table_[a-f0-9]+\.(csv|xlsx)|ppt_[a-f0-9]+\.pptx|doc_[a-f0-9]+\.md|word_[a-f0-9]+\.docx)$", filename):
+    if not re.match(r"^(table_[a-f0-9]+\.(csv|xlsx)|ppt_[a-f0-9]+\.pptx|doc_[a-f0-9]+\.md|word_[a-f0-9]+\.docx|video_script_[a-f0-9]+\.(txt|json)|video_[a-f0-9]+\.mp4|video_audio_[a-f0-9]+\.mp3|poster_[a-f0-9]+\.png)$", filename):
         raise HTTPException(status_code=400, detail="Invalid filename")
     base = _generated_dir()
     path = base / filename
@@ -529,6 +693,16 @@ async def download_generated(filename: str):
         media = "text/markdown; charset=utf-8"
     elif filename.endswith(".docx"):
         media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif filename.endswith(".txt"):
+        media = "text/plain; charset=utf-8"
+    elif filename.endswith(".json"):
+        media = "application/json; charset=utf-8"
+    elif filename.endswith(".mp4"):
+        media = "video/mp4"
+    elif filename.endswith(".mp3"):
+        media = "audio/mpeg"
+    elif filename.endswith(".png"):
+        media = "image/png"
     else:
         media = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     return FileResponse(path, filename=filename, media_type=media)

@@ -604,6 +604,78 @@ def _get_pptx_template_path():
     return p if p.is_file() else None
 
 
+def _get_video_avatar_path():
+    """若存在 data/templates/video_avatar.png 或 video_avatar.jpg 则返回 Path，用作视频讲解人物画面。"""
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent.parent
+    for name in ("video_avatar.png", "video_avatar.jpg"):
+        p = root / "data" / "templates" / name
+        if p.is_file():
+            return p
+    return None
+
+
+def _get_sadtalker_dir():
+    """若已安装 SadTalker（含 inference.py 与 checkpoints），返回其根目录 Path，否则返回 None。"""
+    import os
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent.parent
+    candidates = [
+        os.environ.get("SADTALKER_DIR"),
+        root / "SadTalker",
+        root / "sadtalker",
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        d = Path(c).resolve()
+        if not d.is_dir():
+            continue
+        if (d / "inference.py").is_file() and (d / "checkpoints").is_dir():
+            return d
+    return None
+
+
+def _run_sadtalker(sadtalker_dir, source_image, driven_audio, result_dir, timeout=480):
+    """
+    在 sadtalker_dir 下执行 inference.py，用 source_image + driven_audio 生成口播视频。
+    返回 (生成的 .mp4 的 Path 或 None, 失败时的 stderr 摘要)。
+    若设置 SADTALKER_PYTHON，则用该 Python 执行（可指向含正确 torch/torchvision 的 conda/venv）。
+    """
+    import subprocess
+    import os
+    import sys
+    from pathlib import Path
+    from src.utils.config import get_settings
+    py = os.environ.get("SADTALKER_PYTHON") or get_settings().sadtalker_python or sys.executable
+    sadtalker_dir = Path(sadtalker_dir).resolve()
+    result_dir = Path(result_dir).resolve()
+    result_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        py, str(sadtalker_dir / "inference.py"),
+        "--driven_audio", str(Path(driven_audio).resolve()),
+        "--source_image", str(Path(source_image).resolve()),
+        "--result_dir", str(result_dir),
+        "--preprocess", "full",
+        "--still",
+    ]
+    try:
+        r = subprocess.run(
+            cmd, cwd=str(sadtalker_dir), capture_output=True, timeout=timeout,
+            text=True, encoding="utf-8", errors="replace",
+        )
+        if r.returncode != 0:
+            stderr_snippet = (r.stderr or "")[-800:] if (r.stderr or "") else ""
+            log.warning(f"SadTalker exit {r.returncode}: {stderr_snippet}")
+            return None, stderr_snippet
+        found = list(result_dir.glob("*.mp4"))
+        return (Path(found[0]) if found else None, "")
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        err_msg = str(e)
+        log.warning(f"SadTalker run failed: {e}")
+        return None, err_msg
+
+
 async def generate_table_and_save(prompt: str):
     """生成表格并保存为 CSV 和 Excel（若已安装 openpyxl），返回 (csv_name, xlsx_name 或 None)。"""
     import uuid
@@ -831,3 +903,280 @@ def generate_ppt_from_structured_text(text: str) -> Optional[str]:
     name = f"ppt_{uid}.pptx"
     (base / name).write_bytes(content)
     return name
+
+
+async def generate_video_script(
+    conversation_context: str,
+    user_prompt: str = "",
+) -> Dict[str, Any]:
+    """根据对话内容用 AI 生成视频脚本与分镜，保存到 data/generated。"""
+    import uuid
+    provider = get_ai_provider()
+    system = """你是短视频/口播脚本与分镜师。根据用户提供的【对话记录】生成一份可直接用于拍摄或配音的视频脚本。
+输出一个 JSON 对象，包含：
+- "script": 完整旁白稿（适合朗读配音），基于对话内容提炼，口语化。
+- "shots": 分镜数组，每项 {"scene": 序号, "duration_sec": 建议秒数, "visual": "画面描述", "narration": "该镜头旁白"}，5～15 个镜头。
+内容必须来自对话中的具体信息。只输出一个 JSON，不要 markdown 包裹外的文字。"""
+    user = "根据以下对话内容生成视频脚本与分镜。\n"
+    if user_prompt and user_prompt.strip():
+        user += f"用户补充要求：{user_prompt.strip()}\n\n"
+    user += f"【对话记录】\n{(conversation_context or '').strip() or '（无）'}\n\n请输出 JSON。"
+    try:
+        raw = await provider.generate_response(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.4,
+            max_tokens=4000,
+        )
+        raw = (raw or "").strip()
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+        if m:
+            raw = m.group(1).strip()
+        obj = json.loads(raw)
+        script = str(obj.get("script", ""))
+        shots = obj.get("shots") if isinstance(obj.get("shots"), list) else []
+        uid = uuid.uuid4().hex[:12]
+        base = _generated_dir()
+        script_name = f"video_script_{uid}.txt"
+        (base / script_name).write_text(script, encoding="utf-8")
+        json_name = f"video_script_{uid}.json"
+        (base / json_name).write_text(
+            json.dumps({"script": script, "shots": shots}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        log.info(f"generate_video_script: wrote {base / script_name}")
+        return {"script": script, "shots": shots, "script_filename": script_name, "json_filename": json_name}
+    except json.JSONDecodeError as e:
+        log.error(f"Video script JSON parse error: {e}")
+        raise ValueError("生成内容不是有效 JSON，请重试") from e
+
+
+async def generate_video_file_from_script(script: str) -> Dict[str, Any]:
+    """
+    根据旁白稿用 TTS 生成语音，再与静态画面合成为 .mp4。
+    返回 {"video_filename": str|None, "audio_filename": str|None, "error": str|None}。
+    若未安装 ffmpeg 但 TTS 成功，会保留并返回 audio_filename 供下载配音。
+    """
+    import uuid
+    import subprocess
+    import shutil
+    result = {"video_filename": None, "audio_filename": None, "error": None}
+    script = (script or "").strip()
+    if not script:
+        result["error"] = "旁白稿为空"
+        return result
+    text_for_tts = script[:3500] if len(script) > 3500 else script
+    base = _generated_dir()
+    uid = uuid.uuid4().hex[:12]
+    mp3_path = base / f"video_audio_{uid}.mp3"
+    mp4_name = f"video_{uid}.mp4"
+    mp4_path = base / mp4_name
+    try:
+        import edge_tts
+        comm = edge_tts.Communicate(text_for_tts, voice="zh-CN-YunxiNeural")
+        await comm.save(str(mp3_path))
+        if not mp3_path.is_file():
+            result["error"] = "语音合成失败（edge-tts 未生成文件）"
+            return result
+    except Exception as e:
+        err = str(e)
+        if "nodename nor servname" in err or "Cannot connect" in err:
+            result["error"] = "语音合成失败：无法连接 TTS 服务，请检查网络或代理。"
+        else:
+            result["error"] = "语音合成失败（edge-tts）：" + err[:200]
+        log.warning(f"edge-tts failed: {e}")
+        return result
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        result["audio_filename"] = mp3_path.name
+        result["error"] = "未检测到 ffmpeg，无法生成 MP4。已生成配音 MP3，可先下载收听；安装 ffmpeg 后可生成视频。"
+        log.info(f"generate_video_file: no ffmpeg, kept audio {mp3_path}")
+        return result
+    # 获取音频时长
+    try:
+        out = subprocess.run(
+            [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(mp3_path)],
+            capture_output=True, text=True, timeout=10
+        )
+        duration_sec = float((out.stdout or "0").strip() or 0)
+    except Exception:
+        duration_sec = 60.0
+    if duration_sec <= 0:
+        duration_sec = 60.0
+    # 按句拆分旁白，生成 SRT 字幕
+    chunks = re.split(r"(?<=[。！？；])\s*|(?<=[\n])", text_for_tts)
+    chunks = [c.strip() for c in chunks if c.strip()][:50]
+    if not chunks:
+        chunks = [text_for_tts[:100] + ("…" if len(text_for_tts) > 100 else "")]
+    n = len(chunks)
+    chunk_dur = duration_sec / n
+    srt_parts = []
+    for i, line in enumerate(chunks):
+        start = i * chunk_dur
+        end = (i + 1) * chunk_dur
+        srt_parts.append(f"{i+1}\n{_srt_ts(start)} --> {_srt_ts(end)}\n{line}\n")
+    srt_path = base / f"video_srt_{uid}.srt"
+    srt_path.write_text("\n".join(srt_parts), encoding="utf-8")
+
+    # 使用 /tmp 下无冒号的路径给 subtitles 滤镜，避免 filter 解析时把路径里的 : 当成分隔符
+    import tempfile
+    from pathlib import Path
+    srt_for_ffmpeg = Path(tempfile.gettempdir()) / f"claw_srt_{uid}.srt"
+    try:
+        srt_for_ffmpeg.write_text("\n".join(srt_parts), encoding="utf-8")
+    except Exception:
+        srt_for_ffmpeg = srt_path
+    # 当前用软字幕混流（不依赖 libass）；烧录字幕需 ffmpeg 带 libass
+
+    used_sadtalker = False
+    avatar_path = _get_video_avatar_path()
+    sadtalker_dir = _get_sadtalker_dir()
+    sadtalker_fail_msg = ""
+    try:
+        if avatar_path and avatar_path.is_file() and sadtalker_dir:
+            wav_path = base / f"sadtalker_audio_{uid}.wav"
+            try:
+                subprocess.run(
+                    [ffmpeg, "-y", "-i", str(mp3_path), "-acodec", "pcm_s16le", "-ar", "16000", str(wav_path)],
+                    capture_output=True, timeout=30, check=True,
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                wav_path = None
+            if wav_path and wav_path.is_file():
+                result_dir = base / f"sadtalker_out_{uid}"
+                out_mp4, sadtalker_fail_msg = _run_sadtalker(sadtalker_dir, avatar_path, wav_path, result_dir)
+                try:
+                    wav_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if out_mp4 and out_mp4.is_file():
+                    try:
+                        subprocess.run(
+                            [
+                                ffmpeg, "-y", "-i", str(out_mp4), "-i", str(srt_for_ffmpeg.resolve()),
+                                "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text",
+                                "-metadata:s:s:0", "language=chi", str(mp4_path.resolve()),
+                            ],
+                            capture_output=True, timeout=120, check=True,
+                        )
+                        used_sadtalker = True
+                    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                        pass
+                    try:
+                        shutil.rmtree(result_dir, ignore_errors=True)
+                    except Exception:
+                        pass
+
+        if not used_sadtalker:
+            avatar_path = avatar_path or _get_video_avatar_path()
+            # 两段式合成：先生成无字幕视频，再单独烧录字幕，避免单条 filter 链+输出导致 Invalid argument
+            mp4_naked = base / f"video_{uid}_naked.mp4"
+            try:
+                if avatar_path and avatar_path.is_file():
+                    cmd1 = [
+                        ffmpeg, "-y", "-loop", "1", "-i", str(avatar_path.resolve()),
+                        "-i", str(mp3_path), "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black",
+                        "-c:v", "libx264", "-tune", "stillimage", "-c:a", "aac",
+                        "-shortest", "-pix_fmt", "yuv420p", str(mp4_naked.resolve()),
+                    ]
+                else:
+                    cmd1 = [
+                        ffmpeg, "-y", "-f", "lavfi", "-i", "color=c=#1e1e24:s=1280x720:d=600",
+                        "-i", str(mp3_path), "-c:v", "libx264", "-tune", "stillimage", "-c:a", "aac",
+                        "-shortest", "-pix_fmt", "yuv420p", str(mp4_naked.resolve()),
+                    ]
+                r1 = subprocess.run(cmd1, capture_output=True, timeout=120, text=True, encoding="utf-8", errors="replace")
+                if r1.returncode != 0:
+                    stderr_full = (r1.stderr or "").strip()
+                    stderr_msg = stderr_full[-500:] if len(stderr_full) > 500 else stderr_full
+                    raise RuntimeError(stderr_msg or f"ffmpeg 第一步退出码 {r1.returncode}")
+                if not mp4_naked.is_file():
+                    raise RuntimeError("ffmpeg 未生成无字幕视频文件")
+                # 先尝试烧录字幕（需 ffmpeg 带 libass）；失败则用软字幕
+                filter_script = Path(tempfile.gettempdir()) / f"claw_filter_{uid}.txt"
+                filter_line = f"[0:v]subtitles='{srt_for_ffmpeg.resolve()}'[v]\n"
+                try:
+                    filter_script.write_text(filter_line, encoding="utf-8")
+                except Exception:
+                    filter_script = None
+                step2_ok = False
+                if filter_script and filter_script.is_file():
+                    cmd2_burn = [
+                        ffmpeg, "-y", "-i", str(mp4_naked.resolve()),
+                        "-filter_complex_script", str(filter_script.resolve()),
+                        "-map", "[v]", "-map", "0:a", "-c:a", "copy", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        str(mp4_path.resolve()),
+                    ]
+                    r2 = subprocess.run(cmd2_burn, capture_output=True, timeout=120, text=True, encoding="utf-8", errors="replace")
+                    if r2.returncode == 0:
+                        step2_ok = True
+                    elif "No such filter" in (r2.stderr or "") or "Filter not found" in (r2.stderr or ""):
+                        pass  # 无 libass，下面用软字幕
+                try:
+                    if filter_script:
+                        filter_script.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if not step2_ok:
+                    cmd2 = [
+                        ffmpeg, "-y", "-i", str(mp4_naked.resolve()), "-i", str(srt_for_ffmpeg.resolve()),
+                        "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text", "-metadata:s:s:0", "language=chi",
+                        str(mp4_path.resolve()),
+                    ]
+                    r2 = subprocess.run(cmd2, capture_output=True, timeout=120, text=True, encoding="utf-8", errors="replace")
+                    if r2.returncode != 0:
+                        stderr_full = (r2.stderr or "").strip()
+                        stderr_msg = stderr_full[-500:] if len(stderr_full) > 500 else stderr_full
+                        raise RuntimeError(stderr_msg or f"ffmpeg 第二步(字幕)退出码 {r2.returncode}")
+            finally:
+                try:
+                    mp4_naked.unlink(missing_ok=True)
+                except Exception:
+                    pass
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired, RuntimeError) as e:
+        result["audio_filename"] = mp3_path.name
+        err_detail = str(e)
+        if hasattr(e, "stderr") and e.stderr:
+            err_detail = (err_detail + " " + (e.stderr[:300] if isinstance(e.stderr, str) else e.stderr.decode("utf-8", errors="replace")[:300])).strip()
+        result["error"] = "视频合成失败（ffmpeg/SadTalker），已保留配音 MP3 可下载。错误：" + err_detail[:500]
+        log.warning(f"video synthesis failed: {e}")
+        return result
+    finally:
+        if mp4_path.is_file():
+            try:
+                mp3_path.unlink()
+            except Exception:
+                pass
+        try:
+            srt_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        if srt_for_ffmpeg != srt_path:
+            try:
+                srt_for_ffmpeg.unlink(missing_ok=True)
+            except Exception:
+                pass
+    if mp4_path.is_file():
+        log.info(f"generate_video_file: wrote {mp4_path}")
+        result["video_filename"] = mp4_name
+        result["video_sadtalker_used"] = used_sadtalker
+        if not used_sadtalker and (sadtalker_dir or sadtalker_fail_msg):
+            note = "本次为静态人物图，未使用口播动嘴。"
+            if sadtalker_fail_msg:
+                snippet = sadtalker_fail_msg.replace("\n", " ").strip()[:220]
+                note += " SadTalker 报错：" + snippet
+                if "Can't get the coeffs" in sadtalker_fail_msg or "first_coeff_path" in sadtalker_fail_msg or "3DMM" in sadtalker_fail_msg:
+                    note += "（动漫/卡通图常无法通过人脸检测，可换真人照片试口播，或继续使用静态图。）"
+                elif "timed out" in sadtalker_fail_msg or "TimeoutExpired" in sadtalker_fail_msg:
+                    note += "（口播生成超时 8 分钟，已改为静态图。可缩短旁白或稍后重试。）"
+            else:
+                note += " 若需口播，请在 SadTalker 目录执行 pip install -r requirements.txt 后重试。"
+            result["video_note"] = note
+    return result
+
+
+def _srt_ts(sec: float) -> str:
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = sec % 60
+    return f"{h:02d}:{m:02d}:{int(s):02d},{int((s % 1) * 1000):03d}"

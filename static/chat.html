@@ -50,9 +50,11 @@
 <body>
   <header class="top-strip" style="display:flex;align-items:center;gap:1.5rem;padding:0.75rem 1.5rem;background:var(--surface);border-bottom:1px solid var(--border);font-size:0.9rem">
     <a href="/chat" style="color:var(--accent);text-decoration:none;font-weight:600">Claw Bot</a>
+    <a href="/video" id="videoLink" style="color:var(--text-muted);text-decoration:none">生成视频</a>
     <a href="/daily" style="color:var(--text-muted);text-decoration:none">日报周报</a>
     <a href="/guide" style="color:var(--text-muted);text-decoration:none">仓库文档</a>
     <a href="/config" style="color:var(--text-muted);text-decoration:none">配置</a>
+    <a href="/copy" style="color:var(--text-muted);text-decoration:none">批量文案</a>
   </header>
   <div id="messages"></div>
   <div class="input-bar">
@@ -133,6 +135,8 @@
         loading.remove();
         if (res.ok && data.conversation_id) {
           conversationId = data.conversation_id;
+          const videoLink = document.getElementById('videoLink');
+          if (videoLink) videoLink.href = '/video?conversation_id=' + encodeURIComponent(conversationId);
           let show = data.message || data.error || '（无回复）';
           if (data.error && data.message && data.message.includes('出错')) show += '\n\n详情: ' + data.error;
           addMessage('bot', show);
